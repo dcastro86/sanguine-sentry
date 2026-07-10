@@ -105,7 +105,9 @@ class SanguineHealthMonitor:
             "health_threshold_pct": 80,
             "cv_matching_enabled": False,
             "cv_template_filename": "health_globe.png",
-            "cv_match_threshold": 0.7
+            "cv_match_threshold": 0.7,
+            "bind_ip": "127.0.0.1",
+            "port": 8080
         }
         try:
             if os.path.exists(self.config_path):

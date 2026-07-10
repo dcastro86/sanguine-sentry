@@ -222,20 +222,23 @@ def main():
     os.makedirs(web_dir, exist_ok=True)
     
     # Setup HTTP Server
-    server_address = ("", PORT)
+    bind_ip = monitor_instance.config.get("bind_ip", "127.0.0.1")
+    port = int(monitor_instance.config.get("port", 8080))
+    server_address = (bind_ip, port)
     ThreadingTCPServer.allow_reuse_address = True
     
     try:
         with ThreadingTCPServer(server_address, SanguineHTTPRequestHandler) as httpd:
-            print(f"Web interface calibration dashboard listening at: http://localhost:{PORT}")
+            display_host = "localhost" if bind_ip == "127.0.0.1" else (bind_ip if bind_ip else "localhost")
+            print(f"Web interface calibration dashboard listening at: http://{display_host}:{port}")
             print("Press Ctrl+C to terminate.")
             
             # Automatically open browser (prefer ungoogled-chromium if available)
             try:
                 try:
-                    webbrowser.get("chromium").open(f"http://localhost:{PORT}")
+                    webbrowser.get("chromium").open(f"http://{display_host}:{port}")
                 except Exception:
-                    webbrowser.open(f"http://localhost:{PORT}")
+                    webbrowser.open(f"http://{display_host}:{port}")
             except Exception as e:
                 print(f"Could not open browser automatically: {e}")
                 
