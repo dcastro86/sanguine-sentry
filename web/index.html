@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sanguine Sentry - Auto-Flask Calibration Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+  <div class="dashboard-container">
+    
+    <!-- Top Header -->
+    <header>
+      <div class="brand-section">
+        <h1>Sanguine Sentry</h1>
+        <p>Real-time health globe screen scanner & automatic flask trigger</p>
+      </div>
+      <div class="header-controls">
+        <div id="status-badge" class="status-badge inactive">
+          <div class="status-dot"></div>
+          <span id="status-text">MONITOR SUSPENDED</span>
+        </div>
+        <button id="toggle-monitor-btn" class="btn btn-primary btn-toggle-active">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          START MONITOR
+        </button>
+      </div>
+    </header>
+
+    <!-- Left Side: Calibration Viewport -->
+    <div class="calibration-section">
+      <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+        <div class="card-title">
+          <span>Capture Area Viewport</span>
+          <span id="mouse-coords" class="hotkey-badge" style="display: none;"></span>
+        </div>
+        
+        <div class="canvas-container" id="canvas-wrapper" style="display: flex; gap: 16px; justify-content: center; align-items: center; flex-wrap: wrap; padding: 12px; background: rgba(0,0,0,0.1); border-radius: 8px;">
+          <div style="position: relative;">
+            <canvas id="screenshot-canvas" width="300" height="300" style="display: block; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);"></canvas>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 130px; padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 10px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 1px;">Screencast</div>
+            <button id="refresh-preview-btn" class="btn btn-secondary" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; padding: 8px 12px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh View
+            </button>
+          </div>
+        </div>
+        <div class="calibration-guide">
+          Click anywhere inside the cropped view to select the pixel coordinate to monitor.
+        </div>
+        
+        <!-- Canvas mode selection: Health Globe vs active gameplay gate -->
+        <div style="margin: 12px 16px 0 16px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 6px; display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Canvas Click Target:</div>
+          <div style="display: flex; gap: 16px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; color: #fff;">
+              <input type="radio" name="canvas_mode" value="health" checked style="accent-color: var(--blue);">
+              Health Target (Yellow Crosshair)
+            </label>
+            <label id="canvas-mode-gate-label" style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; color: #fff;">
+              <input type="radio" name="canvas_mode" value="gate" style="accent-color: var(--blue);">
+              Gameplay Gate (Purple Crosshair)
+            </label>
+          </div>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; gap: 16px; align-items: center; justify-content: space-between;">
+          <div class="coordinate-display" style="flex: 1;">
+            <div>Monitored Target:</div>
+            <div id="coords-text" style="color: var(--blue); font-weight: 600;">X: 0, Y: 0</div>
+          </div>
+          
+          <!-- Micro adjustments -->
+          <div class="dpad-container">
+            <div></div>
+            <div class="dpad-btn" onclick="adjustCoordinate(0, -1)">▲</div>
+            <div></div>
+            <div class="dpad-btn" onclick="adjustCoordinate(-1, 0)">◀</div>
+            <div style="display:flex; justify-content:center; align-items:center; font-size:11px; color:var(--text-muted);">1px</div>
+            <div class="dpad-btn" onclick="adjustCoordinate(1, 0)">▶</div>
+            <div></div>
+            <div class="dpad-btn" onclick="adjustCoordinate(0, 1)">▼</div>
+            <div></div>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+          <button id="snap-mouse-btn" class="btn btn-secondary" style="width: 100%; justify-content: center; font-size: 12px; padding: 10px 16px;" title="Captures your cursor position after a 3-second delay, letting you hover over the game window to calibrate coordinates.">
+            🔍 Calibrate to Game Cursor (3s Delay)
+          </button>
+          <button id="auto-detect-btn" class="btn btn-primary" style="width: 100%; justify-content: center; font-size: 12px; font-weight: 600; padding: 10px 16px;" title="Autodetects active game windows (Path of Exile, Diablo, Last Epoch, etc.) and auto-configures coordinates and HUD offsets based on window geometry.">
+            ⚡ Auto-detect ARPG Game Coordinates
+          </button>
+          <button id="save-template-btn" class="btn btn-secondary" style="width: 100%; justify-content: center; font-size: 12px; padding: 10px 16px; background: rgba(0, 180, 216, 0.1); border-color: rgba(0, 180, 216, 0.3);" title="Crops a 150x150 region centered on your current health globe selection and saves it as templates/health_globe.png for OpenCV auto-alignment.">
+            💾 Save Selection as Auto-Align Template
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom: Collapsible Logs & Debug Tab Panel -->
+      <div class="logs-card card" style="margin-top: 0px;">
+        <div id="logs-toggle-header" class="logs-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg id="logs-arrow-icon" class="logs-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+            <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.5px; color: var(--blue);">SYSTEM DEBUG LOGS & CONSOLE</span>
+          </div>
+          <span id="logs-toggle-label" style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Click to Expand</span>
+        </div>
+
+        <div id="logs-wrapper" style="display: none; margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="display: flex; gap: 8px;">
+              <button id="tab-live-btn" class="btn btn-primary" style="padding: 6px 12px; font-size: 11px; border-radius: 4px; box-shadow: none;">Live Console</button>
+              <button id="tab-file-btn" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px; border-radius: 4px;">debug.log File</button>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button id="clear-logs-btn" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px; border-radius: 4px;">
+                CLEAR LIVE LOGS
+              </button>
+              <button id="refresh-file-btn" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px; border-radius: 4px; display: none;">
+                REFRESH FILE
+              </button>
+            </div>
+          </div>
+          
+          <!-- Panel 1: Live Logs -->
+          <div id="logs-panel" class="logs-terminal">
+            <div class="log-line log-info">[--:--:--] [SYSTEM] Dashboard connected. Waiting for status...</div>
+          </div>
+          
+          <!-- Panel 2: debug.log File Output -->
+          <div id="file-panel" class="logs-terminal" style="display: none; white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.5; color: #e0e0e0; overflow-y: auto; height: 180px;">
+            Loading debug.log file content...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Side: Configs & Color Graphs -->
+    <div class="settings-section">
+      
+      <!-- Graph and Live Metrics -->
+      <div class="card">
+        <div class="card-title">Color Analysis</div>
+        
+        <div class="color-metrics">
+          <div class="metric-box red-channel">
+            <div class="metric-label">Red</div>
+            <div id="metric-r" class="metric-value">0</div>
+          </div>
+          <div class="metric-box green-channel">
+            <div class="metric-label">Green</div>
+            <div id="metric-g" class="metric-value">0</div>
+          </div>
+          <div class="metric-box blue-channel">
+            <div class="metric-label">Blue</div>
+            <div id="metric-b" class="metric-value">0</div>
+          </div>
+          <div class="metric-box ratio-metric">
+            <div class="metric-label">Red Ratio</div>
+            <div id="metric-ratio" class="metric-value">0.00</div>
+          </div>
+          <div class="metric-box health-metric">
+            <div class="metric-label">Health Pct</div>
+            <div id="metric-health" class="metric-value">100%</div>
+          </div>
+        </div>
+
+        <div class="graph-container">
+          <canvas id="live-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Logic & Config Settings Form -->
+      <div class="card">
+        <div class="card-title">Trigger Setup</div>
+
+        <div class="form-group" style="display: none;">
+          <label>Logic Mode</label>
+          <select id="logic_mode" class="form-control">
+            <option value="percent" selected>Health Percentage Bounding Box (Recommended)</option>
+            <option value="ratio">Red Ratio (Ignores Shadows)</option>
+            <option value="red_value">Absolute Red Value (Simple threshold)</option>
+            <option value="both">Both (Both criteria must be met)</option>
+          </select>
+        </div>
+
+        <!-- Basic Trigger Settings -->
+        <div id="basic-trigger-settings" style="display: flex; flex-direction: column; gap: 12px;">
+          <!-- Smart Auto-Align (CV) Toggle -->
+          <div class="form-group" title="Dynamically aligns and tracks your health globe position using OpenCV Template Matching to handle UI shifts or window movements." style="padding: 10px; background: rgba(0, 180, 216, 0.05); border: 1px solid rgba(0, 180, 216, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px;">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <span style="font-size: 13px; font-weight: 700; color: #fff;">Smart Auto-Align (CV)</span>
+              <span style="font-size: 11px; color: var(--text-muted);">Dynamically scales and tracks health globe.</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cv_matching_enabled">
+              <span class="slider-round"></span>
+            </label>
+          </div>
+
+          <div class="form-group" id="health-slider-group" title="Trigger the potion hotkey if your health percentage falls below this value.">
+            <label>Health Threshold % (Trigger if health is below this)</label>
+            <div style="display: flex; gap: 12px; align-items: center; margin-top: 4px;">
+              <input type="range" id="health_threshold_pct" min="5" max="99" step="1" value="80" style="flex: 1; accent-color: var(--blue);">
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <input type="number" id="health_threshold_pct_num" min="5" max="99" value="80" class="form-control" style="width: 75px; padding: 6px 10px; text-align: center;">
+                <span style="color: var(--text-muted); font-weight: 600;">%</span>
+              </div>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+              Triggers when calculated health level drops below this percentage.
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group" title="The keyboard key or mouse button that will be emulated/pressed when health falls below the threshold.">
+              <label>Potion Hotkey</label>
+              <select id="trigger_key" class="form-control">
+                <option value="1">Key 1 (Flask 1)</option>
+                <option value="2">Key 2 (Flask 2)</option>
+                <option value="3">Key 3 (Flask 3)</option>
+                <option value="4">Key 4 (Flask 4)</option>
+                <option value="5">Key 5 (Flask 5)</option>
+                <option value="q">Key Q</option>
+                <option value="w">Key W</option>
+                <option value="e">Key E</option>
+                <option value="r">Key R</option>
+                <option value="mouse4">Mouse Button 4 (Back)</option>
+                <option value="mouse5">Mouse Button 5 (Forward)</option>
+              </select>
+            </div>
+
+            <div class="form-group" title="The minimum time (in seconds) to wait between triggers of the potion hotkey to prevent flask spamming.">
+              <label>Cooldown (seconds)</label>
+              <div class="range-group" style="padding-top: 6px;">
+                <input type="range" id="cooldown" min="0.5" max="15.0" step="0.5" value="5.0">
+                <div id="cooldown_val" class="range-value">5.0s</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group" title="How often (in seconds) Sanguine Sentry scans the screen area. Lower values increase response speed but consume more CPU.">
+              <label>Check Interval (seconds)</label>
+              <div class="range-group" style="padding-top: 6px;">
+                <input type="range" id="check_interval" min="0.01" max="0.5" step="0.01" value="0.05">
+                <div id="check_interval_val" class="range-value">0.05s</div>
+              </div>
+            </div>
+            
+            <div class="form-group" title="Global keyboard hotkey (e.g. F10) to toggle Sanguine Sentry monitoring on or off at any time during gameplay.">
+              <label>Suspend Hotkey</label>
+              <input type="text" id="toggle_hotkey" class="form-control" placeholder="f10" value="f10" style="font-family: 'JetBrains Mono', monospace;">
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced Calibration Options (Collapsible) -->
+        <div style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px;">
+          <div id="advanced-toggle-header" class="logs-header" style="padding: 6px 8px; margin: 0;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <svg id="advanced-arrow-icon" class="logs-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+              <span style="font-size: 12px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 0.5px;">Advanced Calibration Options</span>
+            </div>
+            <span id="advanced-toggle-label" style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Click to Expand</span>
+          </div>
+
+          <div id="advanced-wrapper" style="display: none; margin-top: 16px; flex-direction: column; gap: 14px;">
+            
+            <div class="form-group">
+              <label>Detected Session Type</label>
+              <div id="session-type-container" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 10px 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; gap: 8px; cursor: help;">
+                <span class="status-dot" id="session-status-dot" style="background: var(--blue); width: 8px; height: 8px; border-radius: 50%;"></span>
+                <span id="session-type-text" style="color: #fff; font-weight: 600;">DETECTING...</span>
+              </div>
+            </div>
+            
+            <div class="form-row" id="rect-size-group">
+              <div class="form-group" title="The width of the screen scanning rectangle around your health globe. Auto-calculated under Smart Auto-Align.">
+                <label>Scan Rect Width</label>
+                <div style="display: flex; gap: 12px; align-items: center; margin-top: 4px;">
+                  <input type="range" id="rect_width" min="2" max="200" step="1" value="10" style="flex: 1; accent-color: var(--blue);">
+                  <input type="number" id="rect_width_num" min="2" max="200" value="10" class="form-control" style="width: 75px; padding: 6px 10px; text-align: center;">
+                </div>
+              </div>
+              <div class="form-group" title="The height of the screen scanning rectangle. Higher values capture vertical changes (like a health bar).">
+                <label>Scan Rect Height</label>
+                <div style="display: flex; gap: 12px; align-items: center; margin-top: 4px;">
+                  <input type="range" id="rect_height" min="10" max="400" step="1" value="100" style="flex: 1; accent-color: var(--blue);">
+                  <input type="number" id="rect_height_num" min="10" max="400" value="100" class="form-control" style="width: 75px; padding: 6px 10px; text-align: center;">
+                </div>
+              </div>
+            </div>
+
+            <input type="hidden" id="capture_method" value="spectacle">
+            <input type="hidden" id="sensor_size" value="5">
+
+            <div class="form-group" title="Select how the keypress is simulated: 'pynput' (cross-platform native OS injection) or 'Shell Command' (custom CLI shell execution).">
+              <label>Trigger Method</label>
+              <select id="trigger_method" class="form-control">
+                <option value="pynput">pynput (Python native simulated keypress)</option>
+                <option value="command">Shell Command (Custom fallback execution)</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="custom-command-group" title="The custom terminal command executed on trigger (Linux/macOS shell, Windows CMD). Use '{key}' to substitute the selected Potion Hotkey." style="display: none;">
+              <label>Custom Shell Command</label>
+              <input type="text" id="custom_command" class="form-control" value="xdotool key 1" style="font-family: 'JetBrains Mono', monospace;">
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                Placeholder `{key}` will be replaced by the selected Potion Hotkey.
+              </div>
+            </div>
+
+            <!-- Red detection fine-tuning parameters -->
+            <div class="form-group" id="ratio-slider-group" title="Ratio calculation threshold (Red / (Green + Blue + 1)) used in 'ratio' logic mode to trigger when health is low. Helps filter out dark background shadows.">
+              <label>Red Ratio Threshold (Trigger if ratio is below this)</label>
+              <div class="range-group">
+                <input type="range" id="ratio_threshold" min="0.5" max="3.0" step="0.05" value="1.2">
+                <div id="ratio_threshold_val" class="range-value">1.20</div>
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                Calculated as Red / (Green + Blue + 1). Normal red globe is ~1.5 - 2.5. Empty globe is < 1.0.
+              </div>
+            </div>
+
+            <div class="form-group" id="red-slider-group" title="The absolute minimum Red channel pixel value (0-255) required in 'red_value' logic mode before triggering.">
+              <label>Red Intensity Threshold (Trigger if R is below this)</label>
+              <div class="range-group">
+                <input type="range" id="red_threshold" min="10" max="255" step="5" value="80">
+                <div id="red_threshold_val" class="range-value">80</div>
+              </div>
+            </div>
+
+            <!-- Active Gameplay Gate (Menu Blocker) Settings -->
+            <div style="margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: var(--blue);">ACTIVE GAMEPLAY GATE (REQUIRED)</span>
+                <input type="checkbox" id="gate_enabled" checked style="display: none;">
+              </div>
+              
+              <div id="gate-settings-panel" style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 6px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px;">
+                <div class="form-row">
+                  <div class="form-group" title="A coordinate point monitored to check if active gameplay is happening (e.g., verifying if the HUD is visible to avoid triggers in menus).">
+                    <label>Gate Coordinate</label>
+                    <div id="gate-coords-text" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 8px; background: var(--bg-card); border-radius: 4px; border: 1px solid var(--border); color: #fff;">X: 0, Y: 0</div>
+                    <input type="hidden" id="gate_x" value="0">
+                    <input type="hidden" id="gate_y" value="0">
+                  </div>
+                  <div class="form-group" title="The expected background color (RGB) at the Gate Coordinate. If the color doesn't match, Sanguine Sentry suspends monitoring.">
+                    <label>Expected Color (RGB)</label>
+                    <div style="display: flex; gap: 8px; align-items: center; padding: 6px 8px; background: var(--bg-card); border-radius: 4px; border: 1px solid var(--border);">
+                      <div id="gate-color-preview" style="width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--border); background: rgb(0,0,0);"></div>
+                      <div id="gate-rgb-text" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #fff;">(0, 0, 0)</div>
+                      <input type="hidden" id="gate_r" value="0">
+                      <input type="hidden" id="gate_g" value="0">
+                      <input type="hidden" id="gate_b" value="0">
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="form-group" title="The maximum allowed color variance (RGB Euclidean distance) from the Expected Color before the gameplay gate triggers and suspends the monitor.">
+                  <label>Match Tolerance (RGB Distance)</label>
+                  <div class="range-group" style="padding-top: 6px;">
+                    <input type="range" id="gate_tolerance" min="5" max="100" step="5" value="20">
+                    <div id="gate_tolerance_val" class="range-value">20</div>
+                  </div>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+                  💡 Click **Gameplay Gate** on the left viewport to click a HUD pixel (like a gold hud border). Suspends flasking if menus cover it!
+                </div>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; grid-gap: 16px; margin-top: 24px;">
+          <button id="test-trigger-btn" class="btn btn-secondary" style="justify-content: center;">
+            TEST KEY SIMULATION
+          </button>
+          <button id="save-config-btn" class="btn btn-success" style="justify-content: center;">
+            SAVE CONFIG
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+
+
+  </div>
+
+  <script src="index.js" defer></script>
+</body>
+</html>

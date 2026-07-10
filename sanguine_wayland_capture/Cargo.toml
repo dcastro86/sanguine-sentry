@@ -1,0 +1,16 @@
+[package]
+name = "sanguine_wayland_capture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pinray = "0.2.4"
+tokio = { version = "1.0", features = ["full"] }
+image = "0.24"
+interprocess = "1.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zbus = { version = "5.17.0", features = ["blocking"] }
+pipewire = "0.10.0"
+libspa = "0.10.0"
+libc = "0.2"
