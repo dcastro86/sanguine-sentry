@@ -49,7 +49,7 @@ graph TD
 
 ### 1. Clone & Set Up Virtual Environment
 ```bash
-git clone https://github.com/<your-username>/sanguine-sentry.git
+git clone https://github.com/dcastro86/sanguine-sentry.git
 cd sanguine-sentry
 python -m venv .venv
 source .venv/bin/activate
