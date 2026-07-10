@@ -57,7 +57,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. (Optional) Compile Wayland Capture Daemon
-If you are running on Linux under a Wayland session:
+If you are running on Linux under a Wayland session, you can download the pre-compiled `sanguine_wayland_capture` binary directly from the **Releases** page on GitHub and place it in the root folder. Alternatively, you can compile it manually:
 ```bash
 cd sanguine_wayland_capture
 cargo build --release
@@ -87,6 +87,8 @@ Sanguine Sentry reads and writes to `config.json` at runtime. Below are the key 
 | `gate_enabled` | `bool` | Enables the safety gate checking. |
 | `gate_x`, `gate_y` | `int` | Screen coordinates to check for the combat-safety gate. |
 | `gate_r`, `gate_g`, `gate_b` | `int` | Expected RGB color at the gate coordinates. |
+| `bind_ip` | `string` | The IP address the HTTP server binds to (default: `127.0.0.1` for local safety. Set to `0.0.0.0` to allow local network connections). |
+| `port` | `int` | The HTTP server port (default: `8080`). |
 
 ---
 
