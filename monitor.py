@@ -124,7 +124,6 @@ class SanguineHealthMonitor:
                     loaded = json.load(f)
                 # Merge loaded config over defaults to handle missing keys
                 self.config = {**defaults, **loaded}
-                self.config["gate_enabled"] = True # Gate is required, no longer a toggle
                 self.validate_config()
                 # Save back if we populated missing keys or forced status change
                 self.save_config()
