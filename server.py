@@ -4,6 +4,9 @@ import json
 import io
 import webbrowser
 import secrets
+import time
+import threading
+import logging
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 import urllib.parse
@@ -12,6 +15,7 @@ from monitor import SanguineHealthMonitor
 PORT = 8080
 monitor_instance = None
 API_TOKEN = secrets.token_hex(32)
+last_request_time = 0.0
 
 class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
     # Disable console logging for every single request to prevent cluttering the stdout logs
@@ -67,7 +71,8 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        global monitor_instance
+        global monitor_instance, last_request_time
+        last_request_time = time.time()
         if not self.is_authorized():
             self.send_error_response("Unauthorized", 401)
             return
@@ -145,7 +150,8 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
         self.serve_static_file(parsed_url.path)
 
     def do_POST(self):
-        global monitor_instance
+        global monitor_instance, last_request_time
+        last_request_time = time.time()
         if not self.is_authorized():
             self.send_error_response("Unauthorized", 401)
             return
@@ -282,6 +288,24 @@ def main():
             except Exception as e:
                 print(f"Could not open browser automatically: {e}")
                 
+            global last_request_time
+            last_request_time = time.time()
+            
+            # Auto-shutdown heartbeat thread (starts tracking after a 20s initial window to allow page load)
+            def monitor_heartbeat():
+                time.sleep(20.0)
+                while True:
+                    time.sleep(2.0)
+                    # If no requests were received in the last 10 seconds, shut down the server cleanly
+                    if time.time() - last_request_time > 10.0:
+                        print("\nNo client heartbeat detected (browser tab closed). Auto-shutting down server...")
+                        # Run shutdown in a background thread to prevent blocking
+                        threading.Thread(target=httpd.shutdown).start()
+                        break
+            
+            heartbeat_thread = threading.Thread(target=monitor_heartbeat, daemon=True)
+            heartbeat_thread.start()
+            
             httpd.serve_forever()
             success = True
     except KeyboardInterrupt:
