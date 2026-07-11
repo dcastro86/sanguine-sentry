@@ -266,7 +266,7 @@ def main():
     port = int(monitor_instance.config.get("port", 8080))
     server_address = (bind_ip, port)
     ThreadingTCPServer.allow_reuse_address = True
-    
+    success = False
     try:
         with ThreadingTCPServer(server_address, SanguineHTTPRequestHandler) as httpd:
             display_host = "localhost" if bind_ip == "127.0.0.1" else (bind_ip if bind_ip else "localhost")
@@ -283,8 +283,10 @@ def main():
                 print(f"Could not open browser automatically: {e}")
                 
             httpd.serve_forever()
+            success = True
     except KeyboardInterrupt:
         print("\nShutdown signal received. Stopping monitoring...")
+        success = True
     finally:
         if monitor_instance:
             monitor_instance.stop_monitoring()
@@ -292,6 +294,17 @@ def main():
             if monitor_instance.hotkey_listener:
                 monitor_instance.hotkey_listener.stop()
         print("Server stopped. Exiting.")
+        
+        if success:
+            try:
+                logging.shutdown()
+                log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+                if os.path.exists(log_file_path):
+                    with open(log_file_path, "w"):
+                        pass
+                    print("Log file successfully cleared on clean shutdown.")
+            except Exception as e:
+                print(f"Could not clear log file: {e}")
 
 if __name__ == "__main__":
     main()
