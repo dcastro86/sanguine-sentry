@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import logging
+import logging.handlers
 import threading
 import subprocess
 import shlex
@@ -11,13 +12,19 @@ import cv2
 import numpy as np
 # Removed mss import to only use Spectacle capture on Wayland
 
-# Configure logging
+# Configure logging using absolute path and RotatingFileHandler
+log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("debug.log", mode="a", encoding="utf-8")
+        logging.handlers.RotatingFileHandler(
+            log_file_path,
+            maxBytes=5 * 1024 * 1024, # 5MB limit
+            backupCount=3,
+            encoding="utf-8"
+        )
     ]
 )
 
@@ -118,10 +125,12 @@ class SanguineHealthMonitor:
                 # Merge loaded config over defaults to handle missing keys
                 self.config = {**defaults, **loaded}
                 self.config["gate_enabled"] = True # Gate is required, no longer a toggle
+                self.validate_config()
                 # Save back if we populated missing keys or forced status change
                 self.save_config()
             else:
                 self.config = defaults
+                self.validate_config()
                 self.save_config()
         except Exception as e:
             logging.error(f"Error loading config: {e}")
@@ -133,6 +142,27 @@ class SanguineHealthMonitor:
         except Exception as e:
             logging.error(f"Error saving config: {e}")
             
+    def validate_config(self):
+        try:
+            self.config["cooldown"] = max(0.1, float(self.config.get("cooldown", 5.0)))
+            self.config["check_interval"] = max(0.01, float(self.config.get("check_interval", 0.05)))
+            
+            h_thresh = self.config.get("health_threshold_pct", 80)
+            self.config["health_threshold_pct"] = max(1, min(100, int(h_thresh)))
+            
+            self.config["monitor_x"] = max(0, int(self.config.get("monitor_x", 200)))
+            self.config["monitor_y"] = max(0, int(self.config.get("monitor_y", 900)))
+            
+            self.config["rect_width"] = max(1, int(self.config.get("rect_width", 10)))
+            self.config["rect_height"] = max(1, int(self.config.get("rect_height", 100)))
+            
+            self.config["sensor_size"] = max(1, int(self.config.get("sensor_size", 5)))
+            
+            self.config["logic_mode"] = "percent"
+            self.config["cv_matching_enabled"] = bool(self.config.get("cv_matching_enabled", False))
+        except Exception as e:
+            logging.error(f"Error validating config: {e}")
+
     def update_config(self, new_config):
         with self.lock:
             # Check if key simulator needs re-initialization
@@ -144,6 +174,7 @@ class SanguineHealthMonitor:
             reinit_hotkey = "toggle_hotkey" in new_config and new_config["toggle_hotkey"] != self.config.get("toggle_hotkey")
             
             self.config.update(new_config)
+            self.validate_config()
             
             if "gate_x" in new_config and "gate_y" in new_config:
                 # If gate_r is already sent (extracted clean client-side), skip screen grab
@@ -522,22 +553,12 @@ class SanguineHealthMonitor:
                     center_img = self.grab_from_socket(x - c_half, y - c_half, sensor_size, sensor_size)
                     
                     if center_img:
-                        total_r = total_g = total_b = 0
-                        count = 0
-                        for px_y in range(sensor_size):
-                            for px_x in range(sensor_size):
-                                if 0 <= px_x < center_img.width and 0 <= px_y < center_img.height:
-                                    r_val, g_val, b_val = center_img.getpixel((px_x, px_y))[:3]
-                                    total_r += r_val
-                                    total_g += g_val
-                                    total_b += b_val
-                                    count += 1
-                        if count > 0:
-                            r = total_r // count
-                            g = total_g // count
-                            b = total_b // count
+                        img_arr = np.asarray(center_img)[:, :, :3]
+                        if img_arr.size > 0:
+                            mean_color = img_arr.mean(axis=(0, 1))
+                            r, g, b = int(mean_color[0]), int(mean_color[1]), int(mean_color[2])
                         else:
-                            r, g, b = (0, 0, 0)
+                            r, g, b = 0, 0, 0
                     else:
                         r, g, b = (0, 0, 0)
                         
@@ -547,28 +568,18 @@ class SanguineHealthMonitor:
                     bbox_img = self.grab_from_socket(bx_left, bx_top, rect_width, rect_height)
                     
                     if bbox_img:
-                        first_red_row_idx = None
-                        for row_idx in range(rect_height):
-                            # Compute average RGB for this row in the cropped bounding box image
-                            row_r = row_g = row_b = 0
-                            row_count = 0
-                            for col_x in range(rect_width):
-                                if 0 <= col_x < bbox_img.width and 0 <= row_idx < bbox_img.height:
-                                    val = bbox_img.getpixel((col_x, row_idx))[:3]
-                                    row_r += val[0]
-                                    row_g += val[1]
-                                    row_b += val[2]
-                                    row_count += 1
+                        img_arr_bbox = np.asarray(bbox_img)[:, :, :3].astype(np.float32)
+                        if img_arr_bbox.size > 0:
+                            row_means = img_arr_bbox.mean(axis=1)
+                            row_r = row_means[:, 0]
+                            row_g = row_means[:, 1]
+                            row_b = row_means[:, 2]
                             
-                            if row_count > 0:
-                                row_r = row_r // row_count
-                                row_g = row_g // row_count
-                                row_b = row_b // row_count
-                                
-                                ratio = row_r / (row_g + row_b + 1.0)
-                                if ratio >= ratio_threshold and row_r >= red_threshold:
-                                    first_red_row_idx = row_idx
-                                    break
+                            ratios = row_r / (row_g + row_b + 1.0)
+                            matches = np.where((ratios >= ratio_threshold) & (row_r >= red_threshold))[0]
+                            first_red_row_idx = int(matches[0]) if matches.size > 0 else None
+                        else:
+                            first_red_row_idx = None
                         
                         if first_red_row_idx is not None:
                             health_percent = int(((rect_height - 1 - first_red_row_idx) / (rect_height - 1)) * 100) if rect_height > 1 else 0
@@ -610,22 +621,12 @@ class SanguineHealthMonitor:
                                 sct_center = sct.grab(center_monitor)
                                 center_img = Image.frombytes("RGB", (sensor_size, sensor_size), sct_center.bgra, "raw", "BGRX")
                                 
-                                total_r = total_g = total_b = 0
-                                count = 0
-                                for px_y in range(sensor_size):
-                                    for px_x in range(sensor_size):
-                                        if 0 <= px_x < center_img.width and 0 <= px_y < center_img.height:
-                                            r_val, g_val, b_val = center_img.getpixel((px_x, px_y))[:3]
-                                            total_r += r_val
-                                            total_g += g_val
-                                            total_b += b_val
-                                            count += 1
-                                if count > 0:
-                                    r = total_r // count
-                                    g = total_g // count
-                                    b = total_b // count
+                                img_arr = np.asarray(center_img)[:, :, :3]
+                                if img_arr.size > 0:
+                                    mean_color = img_arr.mean(axis=(0, 1))
+                                    r, g, b = int(mean_color[0]), int(mean_color[1]), int(mean_color[2])
                                 else:
-                                    r, g, b = (0, 0, 0)
+                                    r, g, b = 0, 0, 0
                                     
                                 # 2. Grab health bounding box region
                                 bx_left = x - rect_width // 2
@@ -634,27 +635,18 @@ class SanguineHealthMonitor:
                                 sct_bbox = sct.grab(bbox_monitor)
                                 bbox_img = Image.frombytes("RGB", (rect_width, rect_height), sct_bbox.bgra, "raw", "BGRX")
                                 
-                                first_red_row_idx = None
-                                for row_idx in range(rect_height):
-                                    row_r = row_g = row_b = 0
-                                    row_count = 0
-                                    for col_x in range(rect_width):
-                                        if 0 <= col_x < bbox_img.width and 0 <= row_idx < bbox_img.height:
-                                            val = bbox_img.getpixel((col_x, row_idx))[:3]
-                                            row_r += val[0]
-                                            row_g += val[1]
-                                            row_b += val[2]
-                                            row_count += 1
+                                img_arr_bbox = np.asarray(bbox_img)[:, :, :3].astype(np.float32)
+                                if img_arr_bbox.size > 0:
+                                    row_means = img_arr_bbox.mean(axis=1)
+                                    row_r = row_means[:, 0]
+                                    row_g = row_means[:, 1]
+                                    row_b = row_means[:, 2]
                                     
-                                    if row_count > 0:
-                                        row_r = row_r // row_count
-                                        row_g = row_g // row_count
-                                        row_b = row_b // row_count
-                                        
-                                        ratio = row_r / (row_g + row_b + 1.0)
-                                        if ratio >= ratio_threshold and row_r >= red_threshold:
-                                            first_red_row_idx = row_idx
-                                            break
+                                    ratios = row_r / (row_g + row_b + 1.0)
+                                    matches = np.where((ratios >= ratio_threshold) & (row_r >= red_threshold))[0]
+                                    first_red_row_idx = int(matches[0]) if matches.size > 0 else None
+                                else:
+                                    first_red_row_idx = None
                                             
                                 if first_red_row_idx is not None:
                                     health_percent = int(((rect_height - 1 - first_red_row_idx) / (rect_height - 1)) * 100) if rect_height > 1 else 0
@@ -690,48 +682,37 @@ class SanguineHealthMonitor:
                             continue
                         
                         half = sensor_size // 2
-                        total_r = total_g = total_b = 0
-                        count = 0
-                        for px_y in range(y - half, y - half + sensor_size):
-                            for px_x in range(x - half, x - half + sensor_size):
-                                if 0 <= px_x < img.width and 0 <= px_y < img.height:
-                                    r_val, g_val, b_val = img.getpixel((px_x, px_y))[:3]
-                                    total_r += r_val
-                                    total_g += g_val
-                                    total_b += b_val
-                                    count += 1
-                        if count > 0:
-                            r = total_r // count
-                            g = total_g // count
-                            b = total_b // count
-                        else:
-                            r, g, b = (0, 0, 0)
-                            
-                        x_start = x - rect_width // 2
-                        y_start = y - rect_height // 2
+                        c_left = max(0, x - half)
+                        c_top = max(0, y - half)
+                        c_right = min(img.width, x - half + sensor_size)
+                        c_bottom = min(img.height, y - half + sensor_size)
+                        center_img = img.crop((c_left, c_top, c_right, c_bottom))
                         
-                        first_red_row_idx = None
-                        for row_idx in range(rect_height):
-                            row_y = y_start + row_idx
-                            row_r = row_g = row_b = 0
-                            row_count = 0
-                            for col_x in range(x_start, x_start + rect_width):
-                                if 0 <= col_x < img.width and 0 <= row_y < img.height:
-                                    val = img.getpixel((col_x, row_y))[:3]
-                                    row_r += val[0]
-                                    row_g += val[1]
-                                    row_b += val[2]
-                                    row_count += 1
+                        img_arr = np.asarray(center_img)[:, :, :3]
+                        if img_arr.size > 0:
+                            mean_color = img_arr.mean(axis=(0, 1))
+                            r, g, b = int(mean_color[0]), int(mean_color[1]), int(mean_color[2])
+                        else:
+                            r, g, b = 0, 0, 0
                             
-                            if row_count > 0:
-                                row_r = row_r // row_count
-                                row_g = row_g // row_count
-                                row_b = row_b // row_count
-                                
-                                ratio = row_r / (row_g + row_b + 1.0)
-                                if ratio >= ratio_threshold and row_r >= red_threshold:
-                                    first_red_row_idx = row_idx
-                                    break
+                        x_start = max(0, x - rect_width // 2)
+                        y_start = max(0, y - rect_height // 2)
+                        x_end = min(img.width, x + rect_width // 2)
+                        y_end = min(img.height, y + rect_height // 2)
+                        bbox_img = img.crop((x_start, y_start, x_end, y_end))
+                        
+                        img_arr_bbox = np.asarray(bbox_img)[:, :, :3].astype(np.float32)
+                        if img_arr_bbox.size > 0:
+                            row_means = img_arr_bbox.mean(axis=1)
+                            row_r = row_means[:, 0]
+                            row_g = row_means[:, 1]
+                            row_b = row_means[:, 2]
+                            
+                            ratios = row_r / (row_g + row_b + 1.0)
+                            matches = np.where((ratios >= ratio_threshold) & (row_r >= red_threshold))[0]
+                            first_red_row_idx = int(matches[0]) if matches.size > 0 else None
+                        else:
+                            first_red_row_idx = None
                         
                         if first_red_row_idx is not None:
                             health_percent = int(((rect_height - 1 - first_red_row_idx) / (rect_height - 1)) * 100) if rect_height > 1 else 0

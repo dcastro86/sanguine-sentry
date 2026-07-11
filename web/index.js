@@ -25,6 +25,48 @@ let hoverX = null;
 let hoverY = null;
 let latestHealthPct = 100;
 
+// Non-blocking toast notification helper
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  
+  const text = document.createElement('span');
+  text.textContent = message;
+  toast.appendChild(text);
+  
+  container.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.animation = 'fadeOut 0.3s ease forwards';
+    setTimeout(() => {
+      toast.remove();
+    }, 300);
+  }, 4000);
+}
+
+// Exponential backoff status checker
+let statusInterval = 500;
+let statusTimeout = null;
+
+function scheduleFetchStatus() {
+  if (statusTimeout) clearTimeout(statusTimeout);
+  statusTimeout = setTimeout(() => {
+    fetchStatus()
+      .then(() => {
+        statusInterval = 500; // Reset backoff on success
+        scheduleFetchStatus();
+      })
+      .catch(err => {
+        console.error("Status fetch error:", err);
+        statusInterval = Math.min(statusInterval * 1.5, 10000);
+        scheduleFetchStatus();
+      });
+  }, statusInterval);
+}
+
 // Canvas & Chart settings
 const canvas = document.getElementById('screenshot-canvas');
 const ctx = canvas.getContext('2d');
@@ -108,7 +150,7 @@ window.addEventListener('load', () => {
   }
   
   // Periodic fetch: refresh metrics only (no automatic snapshot polling to save CPU/Wayland overhead)
-  setInterval(fetchStatus, 500);
+  scheduleFetchStatus();
 });
 
 function setupFormListeners() {
@@ -242,15 +284,18 @@ function setupFormListeners() {
           name: 'health_globe.png'
         })
       })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("HTTP error " + res.status);
+        return res.json();
+      })
       .then(data => {
-        if (data.status === 'success') {
-          alert("Auto-Align template saved successfully centered around (" + mx + ", " + my + ")!");
+        if (data.status === "success") {
+          showToast(`Auto-Align template saved successfully centered around (${mx}, ${my})!`, "success");
         } else {
-          alert("Failed to save template. Make sure screen is captured and coordinates are valid.");
+          showToast("Failed to save template. Make sure screen is captured and coordinates are valid.", "error");
         }
       })
-      .catch(err => alert("Error saving template: " + err));
+      .catch(err => showToast("Error saving template: " + err, "error"));
     });
   }
 
@@ -311,14 +356,14 @@ function setupFormListeners() {
             .then(configData => {
               populateForm(configData.config);
               fetchSnapshot();
-              snapMouseBtn.disabled = false;
-              snapMouseBtn.innerText = "🔍 Calibrate to Game Cursor (3s Delay)";
             });
           })
           .catch(err => {
-            alert("Failed to read mouse position: " + err);
+            showToast("Failed to read mouse position: " + err, "error");
+          })
+          .finally(() => {
             snapMouseBtn.disabled = false;
-            snapMouseBtn.innerText = "🔍 Calibrate to Game Cursor (3s Delay)";
+            snapMouseBtn.innerText = "Target Under Mouse";
           });
       }
     }, 1000);
@@ -333,8 +378,7 @@ function setupFormListeners() {
         .then(res => res.json())
         .then(data => {
           if (data.success) {
-            alert(`Successfully detected "${data.title}"!\n` +
-                  `Coordinates calibrated: monitor (${data.monitor_x}, ${data.monitor_y}), gate (${data.gate_x}, ${data.gate_y})`);
+            showToast(`Successfully detected "${data.title}"!\nCoordinates calibrated.`, "success");
             // Reload status, form values, and snapshot preview
             fetch('/api/status')
               .then(res => res.json())
@@ -343,13 +387,13 @@ function setupFormListeners() {
                 fetchSnapshot();
               });
           } else {
-            alert("Detection failed: " + (data.error || "No known game window found. Make sure the game is running and visible."));
+            showToast("Detection failed: " + (data.error || "No known game window found."), "error");
           }
           autoDetectBtn.disabled = false;
           autoDetectBtn.innerText = "⚡ Auto-detect ARPG Game Coordinates";
         })
         .catch(err => {
-          alert("Error trying to auto-detect game window: " + err);
+          showToast("Error trying to auto-detect game window: " + err, "error");
           autoDetectBtn.disabled = false;
           autoDetectBtn.innerText = "⚡ Auto-detect ARPG Game Coordinates";
         });
@@ -466,8 +510,11 @@ function populateForm(cfg) {
 
 // Fetch monitor state and configuration
 function fetchStatus() {
-  fetch('/api/status')
-    .then(res => res.json())
+  return fetch('/api/status')
+    .then(res => {
+      if (!res.ok) throw new Error("HTTP error " + res.status);
+      return res.json();
+    })
     .then(data => {
       running = data.running;
       updateStatusUI(running, data.ui_suspended);
@@ -635,24 +682,30 @@ function saveConfig() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
-  .then(res => res.json())
+  .then(res => {
+    if (!res.ok) throw new Error("HTTP error " + res.status);
+    return res.json();
+  })
   .then(data => {
     populateForm(data.config);
     fetchSnapshot();
-    alert("Configuration saved successfully!");
+    showToast("Configuration saved successfully!", "success");
   })
-  .catch(err => alert("Error saving config: " + err));
+  .catch(err => showToast("Error saving config: " + err, "error"));
 }
 
 // Manually trigger a key simulation
 function testTrigger() {
   fetch('/api/trigger', { method: 'POST' })
-    .then(res => res.json())
+    .then(res => {
+      if (!res.ok) throw new Error("HTTP error " + res.status);
+      return res.json();
+    })
     .then(data => {
       if (data.status === 'success') {
         console.log("Manual trigger command sent.");
       } else {
-        alert("Trigger failed. Check logs.");
+        showToast("Trigger failed. Check logs.", "error");
       }
     });
 }

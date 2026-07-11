@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::os::fd::OwnedFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -28,12 +28,14 @@ struct SimpleFrame {
     width: u32,
     height: u32,
     data: Vec<u8>,
+    is_rgba: bool,
 }
 
-#[derive(Default)]
 struct UserData {
     video_format: VideoInfoRaw,
     buffer_params_sent: bool,
+    frame_bytes: Vec<u8>,
+    active_clients: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
@@ -351,6 +353,9 @@ fn run_video_loop(
     runtime_active: Arc<AtomicBool>,
     latest_frame: Arc<Mutex<Option<SimpleFrame>>>,
     control_rx: std::sync::mpsc::Receiver<ControlMessage>,
+    active_clients: Arc<AtomicUsize>,
+    target_w: u32,
+    target_h: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     pw::init();
 
@@ -378,7 +383,12 @@ fn run_video_loop(
     let stream = StreamRc::new(core, "sanguine-dma-video", stream_properties)?;
 
     let listener = stream
-        .add_local_listener_with_user_data(UserData::default())
+        .add_local_listener_with_user_data(UserData {
+            video_format: VideoInfoRaw::default(),
+            buffer_params_sent: false,
+            frame_bytes: Vec::new(),
+            active_clients,
+        })
         .state_changed(|_, _, _, new| match new {
             StreamState::Error(msg) => {
                 tracing::error!(error = %msg, "PipeWire stream entered error state");
@@ -408,6 +418,10 @@ fn run_video_loop(
                     return;
                 }
 
+                if user_data.active_clients.load(Ordering::Relaxed) == 0 {
+                    return;
+                }
+
                 let Some(mut buffer) = stream.dequeue_buffer() else {
                     return;
                 };
@@ -430,7 +444,10 @@ fn run_video_loop(
                 if first_frame.swap(false, Ordering::Relaxed) {
                     println!("First frame received! DataType: {:?}", data_type);
                 }
-                let mut frame_bytes = vec![0u8; frame_w * frame_h * 4];
+                
+                if user_data.frame_bytes.len() != frame_w * frame_h * 4 {
+                    user_data.frame_bytes = vec![0u8; frame_w * frame_h * 4];
+                }
                 let mut success = false;
 
                 if data_type == DataType::DmaBuf {
@@ -461,7 +478,7 @@ fn run_video_loop(
                                  let src_ptr = (ptr as *const u8).add(offset);
                                  for row in 0..frame_h {
                                      let src_row = src_ptr.add(row * actual_stride);
-                                     let dest_row = frame_bytes.as_mut_ptr().add(row * row_bytes);
+                                     let dest_row = user_data.frame_bytes.as_mut_ptr().add(row * row_bytes);
                                      std::ptr::copy_nonoverlapping(src_row, dest_row, row_bytes);
                                  }
                                  success = true;
@@ -489,7 +506,7 @@ fn run_video_loop(
                             let start = row * actual_stride;
                             if start + row_bytes <= src.len() {
                                 let dest_start = row * row_bytes;
-                                frame_bytes[dest_start..dest_start + row_bytes].copy_from_slice(&src[start..start + row_bytes]);
+                                user_data.frame_bytes[dest_start..dest_start + row_bytes].copy_from_slice(&src[start..start + row_bytes]);
                             }
                         }
                         success = true;
@@ -498,11 +515,7 @@ fn run_video_loop(
 
                 if success {
                     let format = user_data.video_format.format();
-                    if format == VideoFormat::RGBA || format == VideoFormat::RGBx {
-                        for pixel in frame_bytes.chunks_exact_mut(4) {
-                            pixel.swap(0, 2);
-                        }
-                    }
+                    let is_rgba = format == VideoFormat::RGBA || format == VideoFormat::RGBx;
 
                      let mut lock = match latest_frame.lock() {
                          Ok(l) => l,
@@ -511,7 +524,8 @@ fn run_video_loop(
                     *lock = Some(SimpleFrame {
                         width: size.width,
                         height: size.height,
-                        data: frame_bytes,
+                        data: user_data.frame_bytes.clone(),
+                        is_rgba,
                     });
                 }
             }
@@ -520,7 +534,7 @@ fn run_video_loop(
 
     let _listener: StreamListener<UserData> = listener;
 
-    let connect_params = build_stream_params(60, 1920, 1080)?;
+    let connect_params = build_stream_params(60, target_w, target_h)?;
 
     let metas_obj = spa::pod::object!(
         SpaTypes::ObjectParamMeta,
@@ -644,10 +658,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let latest_frame = Arc::new(Mutex::new(None::<SimpleFrame>));
     let (control_tx, control_rx) = std::sync::mpsc::channel();
     let runtime_active = Arc::new(AtomicBool::new(true));
+    let active_clients = Arc::new(AtomicUsize::new(0));
 
     let pw_latest_frame = latest_frame.clone();
     let pw_runtime_active = runtime_active.clone();
+    let pw_active_clients = active_clients.clone();
     
+    let target_w = stream.width.unwrap_or(1920);
+    let target_h = stream.height.unwrap_or(1080);
+    println!("Dynamic display size reported by portal: {}x{}", target_w, target_h);
+
     // Spawn PipeWire loop in background thread
     let worker_handle = thread::spawn(move || {
         if let Err(e) = run_video_loop(
@@ -656,6 +676,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pw_runtime_active,
             pw_latest_frame,
             control_rx,
+            pw_active_clients,
+            target_w,
+            target_h,
         ) {
             eprintln!("PipeWire worker error: {:?}", e);
         }
@@ -700,8 +723,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let frame_ref = latest_frame.clone();
+        let client_count_clone = active_clients.clone();
 
         tokio::spawn(async move {
+            struct ClientGuard(Arc<AtomicUsize>);
+            impl Drop for ClientGuard {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            client_count_clone.fetch_add(1, Ordering::SeqCst);
+            let _guard = ClientGuard(client_count_clone);
+
             use tokio::io::AsyncBufReadExt;
             let mut reader = tokio::io::BufReader::new(socket);
             let mut line = String::new();
@@ -741,14 +774,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .unwrap_or(false);
 
                             if fits {
+                                let is_rgba = frame.is_rgba;
                                 let mut rgb_data = Vec::with_capacity(crop_w * crop_h * 3);
                                 for y in crop_y..(crop_y + crop_h) {
                                     for x in crop_x..(crop_x + crop_w) {
                                         let idx = (y * frame_w + x) * 4;
-                                        // BGRA -> RGB
-                                        rgb_data.push(frame.data[idx + 2]); // R
-                                        rgb_data.push(frame.data[idx + 1]); // G
-                                        rgb_data.push(frame.data[idx]);     // B
+                                        if is_rgba {
+                                            rgb_data.push(frame.data[idx]);     // R
+                                            rgb_data.push(frame.data[idx + 1]); // G
+                                            rgb_data.push(frame.data[idx + 2]); // B
+                                        } else {
+                                            // BGRA
+                                            rgb_data.push(frame.data[idx + 2]); // R
+                                            rgb_data.push(frame.data[idx + 1]); // G
+                                            rgb_data.push(frame.data[idx]);     // B
+                                        }
                                     }
                                 }
 
