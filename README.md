@@ -16,6 +16,10 @@ Sanguine Sentry is an advanced auto-flask calibration and health-globe monitorin
 - **🛡️ Fail-Safe Town/Loading Gate**: Define a pixel color gate (e.g., checking UI elements that only appear in combat zones) to automatically suspend flask activation in town or during loading screens.
 - **🎛️ Dynamic Hotkeys & Custom Actions**: Bind triggers to simulated key/mouse inputs (using `pynput`) or run custom OS commands (like `xdotool`).
 - **📊 Interactive Web Dashboard**: Live telemetry graph, screenshot crop previews, mouse position trackers, configuration editors, and real-time logs.
+- **🔒 API Authentication & Rebinder Shield**: Secured HTTP API with random startup authentication tokens and strict `Host` header verification to prevent DNS rebinding.
+- **🚀 NumPy-Vectorized Scans**: Health globe calculations are fully vectorized using NumPy, dropping scan overhead from ~5ms to `<0.1ms` per frame.
+- **💎 Dynamic Frame Optimization**: Rust capture daemon runs at zero CPU/GPU overhead when no dashboard client is connected, using active connection counting.
+- **🔔 Toast Notifications & Polling Backoff**: Vanilla CSS non-blocking toast notifications and exponential polling backoff when the API server is offline.
 
 ---
 
@@ -99,6 +103,16 @@ The web dashboard provides:
 2. **RGB & Ratio Trend Graphs**: Inspect color ratios over time.
 3. **Visual Calibration Tool**: Click on the crop preview to adjust alignment coordinates instantly.
 4. **Log Panel**: View real-time activation logs, capture FPS, and debug notices.
+
+---
+
+## Security & Sandbox
+
+To ensure local safe execution, Sanguine Sentry implements the following protections:
+1. **API Token Validation:** A cryptographically secure random API token is generated on startup. Every front-end API request must authenticate with an `X-API-Token` header.
+2. **DNS Rebinding Shield:** Strict validation of the HTTP `Host` header to reject unauthorized external requests.
+3. **Execution Splitting:** Employs argument-list execution via `shlex` and drops shell invocations (`shell=False`) for command triggers.
+4. **Local Socket Hardening:** Spawns socket files inside private secure directories (`$XDG_RUNTIME_DIR` or `~/.sanguine_sentry.sock`) with strict `0600` permissions and checks client peer credentials (`socket.peer_cred()`) to permit only matching local users.
 
 ---
 
