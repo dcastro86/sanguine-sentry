@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
 use std::os::fd::OwnedFd;
-use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 
 use pipewire as pw;
@@ -453,19 +452,22 @@ fn run_video_loop(
                             };
                             libc::ioctl(fd, DMA_BUF_IOCTL_SYNC, &mut sync_start);
 
-                            if offset + chunk_size <= maxsize {
-                                let src_ptr = (ptr as *const u8).add(offset);
-                                let bytes_per_pixel = 4;
-                                let row_bytes = frame_w * bytes_per_pixel;
-                                let actual_stride = if stride > 0 { stride } else { row_bytes };
+                             let bytes_per_pixel = 4;
+                             let row_bytes = frame_w * bytes_per_pixel;
+                             let actual_stride = if stride > 0 { stride } else { row_bytes };
 
-                                for row in 0..frame_h {
-                                    let src_row = src_ptr.add(row * actual_stride);
-                                    let dest_row = frame_bytes.as_mut_ptr().add(row * row_bytes);
-                                    std::ptr::copy_nonoverlapping(src_row, dest_row, row_bytes);
-                                }
-                                success = true;
-                            }
+                             let needed_size = (frame_h - 1) * actual_stride + row_bytes;
+                             if offset + needed_size <= maxsize {
+                                 let src_ptr = (ptr as *const u8).add(offset);
+                                 for row in 0..frame_h {
+                                     let src_row = src_ptr.add(row * actual_stride);
+                                     let dest_row = frame_bytes.as_mut_ptr().add(row * row_bytes);
+                                     std::ptr::copy_nonoverlapping(src_row, dest_row, row_bytes);
+                                 }
+                                 success = true;
+                             } else {
+                                 tracing::error!("DMA-BUF dimensions exceed maxsize: offset={}, needed_size={}, maxsize={}", offset, needed_size, maxsize);
+                             }
 
                             let mut sync_end = dma_buf_sync {
                                 flags: DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ,
@@ -502,7 +504,10 @@ fn run_video_loop(
                         }
                     }
 
-                    let mut lock = latest_frame.lock().unwrap();
+                     let mut lock = match latest_frame.lock() {
+                         Ok(l) => l,
+                         Err(p) => p.into_inner(),
+                     };
                     *lock = Some(SimpleFrame {
                         width: size.width,
                         height: size.height,
@@ -572,13 +577,40 @@ fn run_video_loop(
     Ok(())
 }
 
+fn get_socket_path() -> std::path::PathBuf {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        let path = std::path::Path::new(&runtime_dir);
+        if path.is_dir() {
+            return path.join("sanguine_sentry.sock");
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::Path::new(&home).join(".sanguine_sentry.sock");
+    }
+    std::path::PathBuf::from("/tmp/sanguine_sentry.sock")
+}
+
+fn get_restore_token_path() -> std::path::PathBuf {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        let path = std::path::Path::new(&runtime_dir);
+        if path.is_dir() {
+            return path.join("sanguine_restore_token.txt");
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::Path::new(&home).join(".sanguine_restore_token.txt");
+    }
+    std::path::PathBuf::from("/tmp/sanguine_restore_token.txt")
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Initializing Sanguine Sentry Wayland daemon (PipeWire & DMA-BUF)...");
 
     let portal_client = PortalClient::new()?;
 
-    let saved_token = std::fs::read_to_string("/tmp/sanguine_restore_token.txt")
+    let token_path = get_restore_token_path();
+    let saved_token = std::fs::read_to_string(&token_path)
         .ok()
         .map(|t| t.trim().to_string());
 
@@ -586,14 +618,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(c) => c,
         Err(e) => {
             println!("Portal request with token failed: {:?}. Retrying without token...", e);
-            let _ = std::fs::remove_file("/tmp/sanguine_restore_token.txt");
+            let _ = std::fs::remove_file(&token_path);
             portal_client.start_screen_cast(true, None)?
         }
     };
 
     if let Some(ref token) = cast.restore_token {
         println!("Saving restore token to bypass future dialogs: {}", token);
-        let _ = fs::write("/tmp/sanguine_restore_token.txt", token);
+        let token_path = get_restore_token_path();
+        
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        
+        if let Ok(mut file) = options.open(&token_path) {
+            use std::io::Write;
+            let _ = file.write_all(token.as_bytes());
+        }
     }
 
     let stream = cast.streams.into_iter().next().ok_or("No screen cast streams returned by portal")?;
@@ -621,15 +662,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Setup UNIX domain socket listener
-    let socket_path = "/tmp/sanguine_sentry.sock";
-    if std::fs::metadata(socket_path).is_ok() {
-        let _ = std::fs::remove_file(socket_path);
+    let socket_path = get_socket_path();
+    if std::fs::metadata(&socket_path).is_ok() {
+        let _ = std::fs::remove_file(&socket_path);
     }
 
-    let listener = UnixListener::bind(socket_path)?;
-    let _ = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600));
+    let old_umask = unsafe { libc::umask(0o177) };
+    let listener = UnixListener::bind(&socket_path);
+    unsafe { libc::umask(old_umask) };
+    let listener = listener?;
 
-    println!("UNIX socket listening at: {}", socket_path);
+    println!("UNIX socket listening at: {}", socket_path.display());
 
     let ctrl_tx = control_tx.clone();
     tokio::spawn(async move {
@@ -639,22 +682,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     loop {
-        let (mut socket, _) = match listener.accept().await {
+        let (socket, _) = match listener.accept().await {
             Ok(val) => val,
             Err(_) => break,
         };
+
+        // Peer UID validation to prevent local privilege escalation / cross-user spoofing
+        if let Ok(cred) = socket.peer_cred() {
+            let current_uid = unsafe { libc::getuid() };
+            if cred.uid() != current_uid {
+                eprintln!("Rejected socket connection from unauthorized UID: {}", cred.uid());
+                continue;
+            }
+        } else {
+            eprintln!("Failed to read peer credentials, rejecting socket connection");
+            continue;
+        }
+
         let frame_ref = latest_frame.clone();
 
         tokio::spawn(async move {
-            let mut buf = [0u8; 128];
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(socket);
+            let mut line = String::new();
             loop {
-                match socket.read(&mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let msg = String::from_utf8_lossy(&buf[..n]);
-                        let parts: Vec<&str> = msg.trim().split_whitespace().collect();
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        let parts: Vec<&str> = line.trim().split_whitespace().collect();
                         if parts.len() != 4 {
-                            let _ = socket.write_all(b"ERROR: Invalid request format. Use 'x y w h'\n").await;
+                            let socket_ref = reader.get_mut();
+                            let _ = socket_ref.write_all(b"ERROR: Invalid request format. Use 'x y w h'\n").await;
                             continue;
                         }
 
@@ -663,16 +722,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let crop_w: usize = parts[2].parse().unwrap_or(10);
                         let crop_h: usize = parts[3].parse().unwrap_or(10);
 
-                        let opt_frame = {
-                            let lock = frame_ref.lock().unwrap();
-                            lock.clone()
+                        let opt_frame = match frame_ref.lock() {
+                            Ok(lock) => lock.clone(),
+                            Err(poisoned) => poisoned.into_inner().clone(),
                         };
 
                         if let Some(frame) = opt_frame {
                             let frame_w = frame.width as usize;
                             let frame_h = frame.height as usize;
 
-                            if crop_x + crop_w <= frame_w && crop_y + crop_h <= frame_h {
+                            let fits = crop_x
+                                .checked_add(crop_w)
+                                .map(|sum| sum <= frame_w)
+                                .unwrap_or(false)
+                                && crop_y
+                                    .checked_add(crop_h)
+                                    .map(|sum| sum <= frame_h)
+                                    .unwrap_or(false);
+
+                            if fits {
                                 let mut rgb_data = Vec::with_capacity(crop_w * crop_h * 3);
                                 for y in crop_y..(crop_y + crop_h) {
                                     for x in crop_x..(crop_x + crop_w) {
@@ -685,13 +753,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 let header = format!("OK {} {}\n", crop_w, crop_h);
-                                if socket.write_all(header.as_bytes()).await.is_err() { break; }
-                                if socket.write_all(&rgb_data).await.is_err() { break; }
+                                let socket_ref = reader.get_mut();
+                                if socket_ref.write_all(header.as_bytes()).await.is_err() { break; }
+                                if socket_ref.write_all(&rgb_data).await.is_err() { break; }
                             } else {
-                                let _ = socket.write_all(b"ERROR: Coordinates out of bounds\n").await;
+                                let socket_ref = reader.get_mut();
+                                let _ = socket_ref.write_all(b"ERROR: Coordinates out of bounds\n").await;
                             }
                         } else {
-                            let _ = socket.write_all(b"ERROR: No frame captured yet\n").await;
+                            let socket_ref = reader.get_mut();
+                            let _ = socket_ref.write_all(b"ERROR: No frame captured yet\n").await;
                         }
                     }
                     Err(_) => break,

@@ -1,3 +1,18 @@
+// Intercept all fetch requests to automatically add the X-API-Token header
+const originalFetch = window.fetch;
+window.fetch = function(url, options) {
+  options = options || {};
+  options.headers = options.headers || {};
+  if (window.apiToken) {
+    if (options.headers instanceof Headers) {
+      options.headers.set('X-API-Token', window.apiToken);
+    } else {
+      options.headers['X-API-Token'] = window.apiToken;
+    }
+  }
+  return originalFetch(url, options);
+};
+
 // Global States
 let config = {};
 let running = false;

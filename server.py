@@ -3,6 +3,7 @@ import sys
 import json
 import io
 import webbrowser
+import secrets
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 import urllib.parse
@@ -10,16 +11,47 @@ from monitor import SanguineHealthMonitor
 
 PORT = 8080
 monitor_instance = None
+API_TOKEN = secrets.token_hex(32)
 
 class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
     # Disable console logging for every single request to prevent cluttering the stdout logs
     def log_message(self, format, *args):
         pass
 
+    def is_authorized(self):
+        # 1. Validate Host header to prevent DNS rebinding
+        host = self.headers.get("Host", "")
+        if ":" in host:
+            host_domain = host.split(":")[0]
+        else:
+            host_domain = host
+            
+        bind_ip = "127.0.0.1"
+        if monitor_instance and monitor_instance.config:
+            bind_ip = monitor_instance.config.get("bind_ip", "127.0.0.1")
+        allowed_hosts = {"localhost", "127.0.0.1", bind_ip}
+        if host_domain not in allowed_hosts:
+            return False
+            
+        # Static files only require Host validation, not token
+        if not self.path.startswith("/api/"):
+            return True
+            
+        # 2. Check API token
+        auth_header = self.headers.get("Authorization", "")
+        token_header = self.headers.get("X-API-Token", "")
+        
+        token = ""
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        elif token_header:
+            token = token_header
+            
+        return token == API_TOKEN
+
     def send_json(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
@@ -27,14 +59,18 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_json({"error": message}, status)
 
     def do_OPTIONS(self):
+        if not self.is_authorized():
+            self.send_response(401)
+            self.end_headers()
+            return
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_GET(self):
         global monitor_instance
+        if not self.is_authorized():
+            self.send_error_response("Unauthorized", 401)
+            return
         parsed_url = urllib.parse.urlparse(self.path)
         
         # API Routes
@@ -50,7 +86,7 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
                     "color_history": list(monitor_instance.color_history),
                     "ui_suspended": monitor_instance.ui_suspended,
                     "session_type": monitor_instance.detect_session_type(),
-                    "capture_method": "mss" if monitor_instance.detect_session_type() in ["x11", "windows"] else ("socket" if os.path.exists("/tmp/sanguine_sentry.sock") else "spectacle")
+                    "capture_method": "mss" if monitor_instance.detect_session_type() in ["x11", "windows"] else ("socket" if os.path.exists(monitor_instance.get_socket_path()) else "spectacle")
                 }
             self.send_json(status_data)
             return
@@ -70,8 +106,6 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("X-Crop-Left", str(left))
                 self.send_header("X-Crop-Top", str(top))
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Expose-Headers", "X-Crop-Left, X-Crop-Top")
                 self.end_headers()
                 self.wfile.write(img_byte_arr)
             except Exception as e:
@@ -102,7 +136,6 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(content.encode("utf-8"))
             except Exception as e:
@@ -113,6 +146,9 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         global monitor_instance
+        if not self.is_authorized():
+            self.send_error_response("Unauthorized", 401)
+            return
         parsed_url = urllib.parse.urlparse(self.path)
         
         # Read content length and parse JSON body
@@ -192,13 +228,17 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             content_type = "image/svg+xml"
 
         try:
-            with open(file_path, "rb") as f:
-                content = f.read()
+            if clean_path == "index.html":
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content_str = f.read()
+                content = content_str.replace("{{API_TOKEN}}", API_TOKEN).encode("utf-8")
+            else:
+                with open(file_path, "rb") as f:
+                    content = f.read()
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(content)))
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(content)
         except Exception as e:

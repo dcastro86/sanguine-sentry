@@ -5,6 +5,7 @@ import time
 import logging
 import threading
 import subprocess
+import shlex
 from PIL import Image
 import cv2
 import numpy as np
@@ -43,6 +44,7 @@ class SanguineHealthMonitor:
         self.last_full_screenshot = None
         self.last_screenshot_time = 0.0
         self.ui_suspended = False
+        self.shutdown_event = threading.Event()
         
         # Simulator setups
         self.keyboard = None
@@ -248,6 +250,13 @@ class SanguineHealthMonitor:
         with self.lock:
             if self.running:
                 return
+            # Ensure any old threads are cleaned up if still alive
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                self.monitor_thread.join(timeout=0.2)
+            if self.alignment_thread and self.alignment_thread.is_alive():
+                self.alignment_thread.join(timeout=0.2)
+                
+            self.shutdown_event.clear()
             self.running = True
             
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
@@ -262,6 +271,7 @@ class SanguineHealthMonitor:
     def stop_monitoring(self):
         with self.lock:
             self.running = False
+        self.shutdown_event.set()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=1.0)
             self.monitor_thread = None
@@ -310,8 +320,9 @@ class SanguineHealthMonitor:
             cmd = cmd.replace("{key}", key)
 
         try:
+            args = shlex.split(cmd)
             # Run asynchronously so we don't block the monitoring thread
-            subprocess.Popen(cmd, shell=True)
+            subprocess.Popen(args)
             self.add_log(f"POTION TRIGGERED! Executed command: {cmd}", "TRIGGER")
             return True
         except Exception as e:
@@ -359,19 +370,26 @@ class SanguineHealthMonitor:
                         pass
             return None
 
+    def get_socket_path(self):
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if runtime_dir and os.path.isdir(runtime_dir):
+            return os.path.join(runtime_dir, "sanguine_sentry.sock")
+        return os.path.expanduser("~/.sanguine_sentry.sock")
+
     def grab_from_socket(self, x, y, w, h):
         import socket
-        socket_path = "/tmp/sanguine_sentry.sock"
+        socket_path = self.get_socket_path()
         if not os.path.exists(socket_path):
             return None
         
+        client = None
         try:
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             client.settimeout(0.1)  # Sub-millisecond response expected, 100ms is a safe upper bound
             client.connect(socket_path)
             
             # Send coordinates request
-            req = f"{x} {y} {w} {h}"
+            req = f"{x} {y} {w} {h}\n"
             client.sendall(req.encode('utf-8'))
             
             # Read response header (e.g. "OK w h\n")
@@ -388,9 +406,18 @@ class SanguineHealthMonitor:
                 
             # Parse header
             parts = header.decode('utf-8').strip().split()
+            if len(parts) < 3:
+                client.close()
+                return None
             ret_w = int(parts[1])
             ret_h = int(parts[2])
             
+            # Limit the dimensions to prevent massive allocations / DoS
+            if ret_w <= 0 or ret_w > 4096 or ret_h <= 0 or ret_h > 4096:
+                client.close()
+                logging.warning(f"Rejected invalid frame size from socket: {ret_w}x{ret_h}")
+                return None
+                
             # Read raw RGB bytes
             expected_size = ret_w * ret_h * 3
             data = b""
@@ -401,12 +428,19 @@ class SanguineHealthMonitor:
                 data += chunk
                 
             client.close()
+            client = None
             
             if len(data) == expected_size:
                 return Image.frombytes("RGB", (ret_w, ret_h), data)
         except Exception:
             # Silent fallback if daemon isn't running or socket times out
             pass
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
             
         return None
 
@@ -463,7 +497,7 @@ class SanguineHealthMonitor:
                 y = self.config.get("monitor_y", 900)
                 check_interval = self.config.get("check_interval", 0.05)
                 cooldown = self.config.get("cooldown", 5.0)
-                logic_mode = self.config.get("logic_mode", "ratio")
+                logic_mode = self.config.get("logic_mode", "percent")
                 red_threshold = self.config.get("red_threshold", 80)
                 ratio_threshold = self.config.get("ratio_threshold", 1.2)
                 sensor_size = self.config.get("sensor_size", 5)
@@ -480,7 +514,7 @@ class SanguineHealthMonitor:
             
             try:
                 # Try socket-based capturing first
-                socket_active = os.path.exists("/tmp/sanguine_sentry.sock")
+                socket_active = os.path.exists(self.get_socket_path())
                 
                 if socket_active:
                     # 1. Grab center target region
@@ -541,9 +575,10 @@ class SanguineHealthMonitor:
                         else:
                             health_percent = 0
                     else:
-                        health_percent = 0
+                        health_percent = None
                         
-                    health_percent = max(0, min(100, health_percent))
+                    if health_percent is not None:
+                        health_percent = max(0, min(100, health_percent))
                     
                     # 3. Grab active gameplay gate if enabled
                     ui_suspended = False
@@ -724,7 +759,8 @@ class SanguineHealthMonitor:
                 with self.lock:
                     self.current_rgb = (r, g, b)
                     self.current_ratio = r / (g + b + 1.0)
-                    self.current_health_pct = health_percent
+                    if health_percent is not None:
+                        self.current_health_pct = health_percent
                     self.ui_suspended = ui_suspended
                     
                     # Log history (keep last 60 records)
@@ -734,7 +770,7 @@ class SanguineHealthMonitor:
                         "g": g,
                         "b": b,
                         "ratio": self.current_ratio,
-                        "health_pct": health_percent
+                        "health_pct": health_percent if health_percent is not None else self.current_health_pct
                     })
                     if len(self.color_history) > 60:
                         self.color_history.pop(0)
@@ -744,7 +780,7 @@ class SanguineHealthMonitor:
                 now = time.time()
                 
                 if now - self.last_trigger_time >= cooldown and not self.ui_suspended:
-                    if health_percent < health_threshold_pct:
+                    if health_percent is not None and health_percent < health_threshold_pct:
                         triggered = True
                         reason = f"Health percentage {health_percent}% < threshold {health_threshold_pct}%"
                             
@@ -755,9 +791,9 @@ class SanguineHealthMonitor:
                         
             except Exception as e:
                 self.add_log(f"Error in monitor loop iteration: {e}", "ERROR")
-                time.sleep(1.0)
+                self.shutdown_event.wait(1.0)
                 
-            time.sleep(max(0.01, check_interval))
+            self.shutdown_event.wait(max(0.01, check_interval))
             
         self.add_log("Monitoring loop exited.")
 
@@ -928,6 +964,9 @@ class SanguineHealthMonitor:
 
     def save_template_from_screen(self, crop_x, crop_y, crop_w, crop_h, name="health_globe.png"):
         """Saves a portion of the screen as a template image for CV matching."""
+        name = os.path.basename(name)
+        if not name.endswith(".png"):
+            name = "health_globe.png"
         session_type = self.detect_session_type()
         img = None
         if session_type in ["x11", "windows"]:
@@ -1015,8 +1054,9 @@ class SanguineHealthMonitor:
             with self.lock:
                 if not self.running:
                     break
-                enabled = self.config.get("cv_matching_enabled", True)
+                enabled = self.config.get("cv_matching_enabled", False)
                 template_name = self.config.get("cv_template_filename", "health_globe.png")
+                template_name = os.path.basename(template_name)
                 threshold = self.config.get("cv_match_threshold", 0.7)
                 
             if enabled:
@@ -1066,13 +1106,22 @@ class SanguineHealthMonitor:
                                 new_rect_height = max(10, int(base_rect_height * scale))
                                 
                                 with self.lock:
-                                    self.config["monitor_x"] = new_monitor_x
-                                    self.config["monitor_y"] = new_monitor_y
-                                    self.config["gate_x"] = new_gate_x
-                                    self.config["gate_y"] = new_gate_y
-                                    self.config["rect_width"] = new_rect_width
-                                    self.config["rect_height"] = new_rect_height
-                                    self.save_config()
+                                    has_changed = (
+                                        self.config.get("monitor_x") != new_monitor_x or
+                                        self.config.get("monitor_y") != new_monitor_y or
+                                        self.config.get("gate_x") != new_gate_x or
+                                        self.config.get("gate_y") != new_gate_y or
+                                        self.config.get("rect_width") != new_rect_width or
+                                        self.config.get("rect_height") != new_rect_height
+                                    )
+                                    if has_changed:
+                                        self.config["monitor_x"] = new_monitor_x
+                                        self.config["monitor_y"] = new_monitor_y
+                                        self.config["gate_x"] = new_gate_x
+                                        self.config["gate_y"] = new_gate_y
+                                        self.config["rect_width"] = new_rect_width
+                                        self.config["rect_height"] = new_rect_height
+                                        self.save_config()
                                 
                                 current_pos = (new_monitor_x, new_monitor_y, new_rect_width, new_rect_height)
                                 if last_logged_pos is None or abs(last_logged_pos[0] - new_monitor_x) > 3 or abs(last_logged_pos[1] - new_monitor_y) > 3:
@@ -1091,7 +1140,7 @@ class SanguineHealthMonitor:
             else:
                 last_logged_pos = None
                 
-            time.sleep(5.0)
+            self.shutdown_event.wait(5.0)
         self.add_log("CV Auto-Align loop exited.")
 
 if __name__ == "__main__":
