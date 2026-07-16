@@ -157,8 +157,6 @@ class TestSanguineHealthMonitor(unittest.TestCase):
         self.assertEqual(health_percent, 50)
 
 if __name__ == "__main__":
-    import sys
-    import os
     suite = unittest.TestLoader().loadTestsFromTestCase(TestSanguineHealthMonitor)
     runner = unittest.TextTestRunner()
     result = runner.run(suite)

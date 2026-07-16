@@ -619,6 +619,7 @@ fn get_restore_token_path() -> std::path::PathBuf {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt::init();
     println!("Initializing Sanguine Sentry Wayland daemon (PipeWire & DMA-BUF)...");
 
     let portal_client = PortalClient::new()?;

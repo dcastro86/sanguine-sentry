@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import io
 import webbrowser
@@ -71,7 +70,7 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        global monitor_instance, last_request_time
+        global last_request_time
         last_request_time = time.time()
         if not self.is_authorized():
             self.send_error_response("Unauthorized", 401)
@@ -150,7 +149,7 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
         self.serve_static_file(parsed_url.path)
 
     def do_POST(self):
-        global monitor_instance, last_request_time
+        global last_request_time
         last_request_time = time.time()
         if not self.is_authorized():
             self.send_error_response("Unauthorized", 401)
