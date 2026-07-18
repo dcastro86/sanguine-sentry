@@ -9,11 +9,11 @@ import logging
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 import urllib.parse
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from monitor import SanguineHealthMonitor
-
 PORT = 8080
 monitor_instance = None
-API_TOKEN = secrets.token_hex(32)
 last_request_time = 0.0
 
 class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -40,17 +40,15 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
         if not self.path.startswith("/api/"):
             return True
             
-        # 2. Check API token
-        auth_header = self.headers.get("Authorization", "")
-        token_header = self.headers.get("X-API-Token", "")
+        # 2. Check CSRF Header and Token
+        token = monitor_instance.config.get("api_token") if monitor_instance and monitor_instance.config else ""
+        client_token = self.headers.get("X-Sanguine-Auth")
         
-        token = ""
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-        elif token_header:
-            token = token_header
+        # If no token is set in config (e.g. disabled auth), allow it, otherwise require match
+        if not token:
+            return True
             
-        return token == API_TOKEN
+        return client_token == token
 
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -77,6 +75,10 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             return
         parsed_url = urllib.parse.urlparse(self.path)
         
+        if parsed_url.path == "/health":
+            self.send_json({"status": "ok"})
+            return
+
         # API Routes
         if parsed_url.path == "/api/status":
             with monitor_instance.lock:
@@ -209,9 +211,12 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             path = "/index.html"
             
         # Clean path to prevent directory traversal
-        clean_path = os.path.basename(path)
-        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-        file_path = os.path.join(web_dir, clean_path)
+        web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+        rel_path = path.lstrip('/')
+        file_path = os.path.abspath(os.path.join(web_dir, rel_path))
+        if not file_path.startswith(os.path.abspath(web_dir)):
+            self.send_error(403, "Forbidden")
+            return
         
         # Fallback to index.html if the file doesn't exist
         if not os.path.exists(file_path) or os.path.isdir(file_path):
@@ -233,10 +238,9 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             content_type = "image/svg+xml"
 
         try:
-            if clean_path == "index.html":
+            if file_path.endswith("index.html"):
                 with open(file_path, "r", encoding="utf-8") as f:
-                    content_str = f.read()
-                content = content_str.replace("{{API_TOKEN}}", API_TOKEN).encode("utf-8")
+                    content = f.read().encode("utf-8")
             else:
                 with open(file_path, "rb") as f:
                     content = f.read()
@@ -253,7 +257,7 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
 
 def main():
     global monitor_instance
-    print("Initializing Sanguine Sentry Flask Monitor...")
+    print("Initializing Sanguine Sentry HTTP Monitor...")
     
     # Initialize monitor instance
     monitor_instance = SanguineHealthMonitor()
@@ -261,9 +265,14 @@ def main():
     # Auto-start monitoring if enabled in config
     if monitor_instance.config.get("enabled", False):
         monitor_instance.start_monitoring()
+        
+    # Generate API token if not exists
+    if "api_token" not in monitor_instance.config or not monitor_instance.config["api_token"]:
+        monitor_instance.config["api_token"] = secrets.token_hex(16)
+        monitor_instance.save_config()
 
     # Create the web folder if it doesn't exist
-    web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+    web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
     os.makedirs(web_dir, exist_ok=True)
     
     # Setup HTTP Server
@@ -275,15 +284,19 @@ def main():
     try:
         with ThreadingTCPServer(server_address, SanguineHTTPRequestHandler) as httpd:
             display_host = "localhost" if bind_ip == "127.0.0.1" else (bind_ip if bind_ip else "localhost")
-            print(f"Web interface calibration dashboard listening at: http://{display_host}:{port}")
-            print("Press Ctrl+C to terminate.")
+            print("Sanguine Sentry Core Active.")
+            print("---------------------------------------------")
+            token = monitor_instance.config.get("api_token", "")
+            dashboard_url = f"http://{display_host}:{port}/?token={token}"
+            print(f"Access the dashboard at: {dashboard_url}")
+            print("---------------------------------------------")
             
             # Automatically open browser (prefer ungoogled-chromium if available)
             try:
                 try:
-                    webbrowser.get("chromium").open(f"http://{display_host}:{port}")
+                    webbrowser.get("chromium").open(dashboard_url)
                 except Exception:
-                    webbrowser.open(f"http://{display_host}:{port}")
+                    webbrowser.open(dashboard_url)
             except Exception as e:
                 print(f"Could not open browser automatically: {e}")
                 
@@ -305,11 +318,18 @@ def main():
             heartbeat_thread = threading.Thread(target=monitor_heartbeat, daemon=True)
             heartbeat_thread.start()
             
+            import signal
+            def shutdown_handler(signum, frame):
+                print("\nShutdown signal received. Stopping monitoring...", flush=True)
+                threading.Thread(target=httpd.shutdown).start()
+            
+            signal.signal(signal.SIGINT, shutdown_handler)
+            signal.signal(signal.SIGTERM, shutdown_handler)
+
             httpd.serve_forever()
             success = True
-    except KeyboardInterrupt:
-        print("\nShutdown signal received. Stopping monitoring...")
-        success = True
+    except Exception:
+        pass
     finally:
         if monitor_instance:
             monitor_instance.stop_monitoring()

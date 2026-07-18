@@ -1,14 +1,20 @@
-// Intercept all fetch requests to automatically add the X-API-Token header
+// Intercept all fetch requests to automatically add the X-Sanguine-Auth header
+const urlParams = new URLSearchParams(window.location.search);
+const urlToken = urlParams.get('token');
+if (urlToken) {
+    localStorage.setItem('sanguine_token', urlToken);
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+const apiToken = localStorage.getItem('sanguine_token') || (window.SANGUINE_TOKEN || '');
+
 const originalFetch = window.fetch;
 window.fetch = function(url, options) {
   options = options || {};
   options.headers = options.headers || {};
-  if (window.apiToken) {
-    if (options.headers instanceof Headers) {
-      options.headers.set('X-API-Token', window.apiToken);
-    } else {
-      options.headers['X-API-Token'] = window.apiToken;
-    }
+  if (options.headers instanceof Headers) {
+    options.headers.set('X-Sanguine-Auth', apiToken);
+  } else {
+    options.headers['X-Sanguine-Auth'] = apiToken;
   }
   return originalFetch(url, options);
 };

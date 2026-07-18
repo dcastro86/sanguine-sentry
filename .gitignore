@@ -6,3 +6,4 @@ debug.log
 .env
 config.json
 sanguine_wayland_capture/target/
+debug.log

@@ -601,7 +601,7 @@ fn get_socket_path() -> std::path::PathBuf {
     if let Ok(home) = std::env::var("HOME") {
         return std::path::Path::new(&home).join(".sanguine_sentry.sock");
     }
-    std::path::PathBuf::from("/tmp/sanguine_sentry.sock")
+    panic!("Neither XDG_RUNTIME_DIR nor HOME is set. Cannot safely create socket.");
 }
 
 fn get_restore_token_path() -> std::path::PathBuf {
@@ -614,7 +614,7 @@ fn get_restore_token_path() -> std::path::PathBuf {
     if let Ok(home) = std::env::var("HOME") {
         return std::path::Path::new(&home).join(".sanguine_restore_token.txt");
     }
-    std::path::PathBuf::from("/tmp/sanguine_restore_token.txt")
+    panic!("Neither XDG_RUNTIME_DIR nor HOME is set. Cannot safely create restore token.");
 }
 
 #[tokio::main]
