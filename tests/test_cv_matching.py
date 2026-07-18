@@ -5,10 +5,10 @@ import numpy as np
 from PIL import Image
 
 # Import SanguineHealthMonitor
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.abspath(os.path.join(__file__, '..'))))
 from monitor import SanguineHealthMonitor
 
-def run_test():
+def test_cv_matching():
     print("Initializing test monitor...")
     monitor = SanguineHealthMonitor()
     
@@ -35,25 +35,14 @@ def run_test():
     print("Running scale-invariant template matching...")
     match = monitor.find_template_scale_invariant(scaled_screen_img, template_img, threshold=0.5)
     
-    if match:
-        print("\nMatch Success!")
-        print(f"Detected Center: ({match['x']}, {match['y']})")
-        print(f"Detected Scale: {match['scale']:.2f}")
-        print(f"Match Score: {match['score']:.4f}")
-        
-        # Expected center (83, 603)
-        dx = abs(match['x'] - 83)
-        dy = abs(match['y'] - 603)
-        if dx <= 2 and dy <= 2:
-            print("Verification PASSED: Matched coordinates are within tolerance (<= 2px error).")
-            return True
-        else:
-            print(f"Verification FAILED: Coordinates shifted too far by dx={dx}, dy={dy}")
-            return False
-    else:
-        print("\nVerification FAILED: No template match found.")
-        return False
-
-if __name__ == "__main__":
-    success = run_test()
-    sys.exit(0 if success else 1)
+    assert match is not None, "No template match found."
+    
+    print("\nMatch Success!")
+    print(f"Detected Center: ({match['x']}, {match['y']})")
+    print(f"Detected Scale: {match['scale']:.2f}")
+    print(f"Match Score: {match['score']:.4f}")
+    
+    # Expected center (83, 603)
+    dx = abs(match['x'] - 83)
+    dy = abs(match['y'] - 603)
+    assert dx <= 2 and dy <= 2, f"Coordinates shifted too far by dx={dx}, dy={dy}"
