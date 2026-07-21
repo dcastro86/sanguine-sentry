@@ -57,17 +57,38 @@ class ConfigMixin:
                 if 'gate_r' not in new_config:
                     gx = int(new_config['gate_x'])
                     gy = int(new_config['gate_y'])
-                    img = self.grab_wayland_screenshot()
-                    if img:
-                        try:
-                            if 0 <= gx < img.width and 0 <= gy < img.height:
-                                r, g, b = img.getpixel((gx, gy))[:3]
-                                self.config['gate_r'] = r
-                                self.config['gate_g'] = g
-                                self.config['gate_b'] = b
-                                self.add_log(f'Auto-captured gate reference color at ({gx}, {gy}): RGB({r}, {g}, {b})')
-                        except Exception as e:
-                            logging.error(f'Error auto-capturing gate pixel color: {e}')
+                    try:
+                        session_type = self.get_session_type()
+                        
+                        r, g, b = None, None, None
+                        
+                        if session_type == 'wayland':
+                            gate_img = self.grab_from_socket(gx, gy, 1, 1)
+                            if gate_img:
+                                r, g, b = gate_img.getpixel((0, 0))[:3]
+                            else:
+                                # Fallback to spectacle if socket fails
+                                img = self.grab_wayland_screenshot()
+                                if img and 0 <= gx < img.width and 0 <= gy < img.height:
+                                    r, g, b = img.getpixel((gx, gy))[:3]
+                        else:
+                            import mss
+                            from PIL import Image
+                            with mss.mss() as sct:
+                                gate_monitor = {'top': gy, 'left': gx, 'width': 1, 'height': 1}
+                                sct_gate = sct.grab(gate_monitor)
+                                gate_img = Image.frombytes('RGB', (1, 1), sct_gate.bgra, 'raw', 'BGRX')
+                                r, g, b = gate_img.getpixel((0, 0))[:3]
+                        
+                        if r is not None and g is not None and b is not None:
+                            self.config['gate_r'] = r
+                            self.config['gate_g'] = g
+                            self.config['gate_b'] = b
+                            self.add_log(f'Auto-captured gate reference color at ({gx}, {gy}): RGB({r}, {g}, {b})')
+                        else:
+                            logging.error('Failed to capture gate pixel color: Image was None.')
+                    except Exception as e:
+                        logging.error(f'Error auto-capturing gate pixel color: {e}')
             self.save_config()
             if reinit_kbd:
                 self.init_keyboard()

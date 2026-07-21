@@ -337,71 +337,109 @@ function setupFormListeners() {
 
   refreshFileBtn.addEventListener('click', fetchDebugLogFile);
 
-  const snapMouseBtn = document.getElementById('snap-mouse-btn');
-  snapMouseBtn.addEventListener('click', () => {
-    let count = 3;
-    snapMouseBtn.disabled = true;
-    snapMouseBtn.innerText = `Hover target in ${count}s...`;
+  document.getElementById('snap-mouse-btn').addEventListener('click', () => {
+    const btn = document.getElementById('snap-mouse-btn');
+    const originalText = btn.innerHTML;
+    let countdown = 3;
     
-    const timer = setInterval(() => {
-      count--;
-      if (count > 0) {
-        snapMouseBtn.innerText = `Hover target in ${count}s...`;
+    btn.disabled = true;
+    btn.innerHTML = `⏱️ Capturing in ${countdown}s... Hover over the target!`;
+    
+    const interval = setInterval(() => {
+      countdown--;
+      if (countdown > 0) {
+        btn.innerHTML = `⏱️ Capturing in ${countdown}s... Hover over the target!`;
       } else {
-        clearInterval(timer);
-        snapMouseBtn.innerText = "Capturing...";
+        clearInterval(interval);
+        btn.innerHTML = '📸 Capturing...';
+        
         fetch('/api/mouse')
           .then(res => res.json())
           .then(data => {
-            fetch('/api/config', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ monitor_x: data.x, monitor_y: data.y })
-            })
-            .then(res => res.json())
-            .then(configData => {
-              populateForm(configData.config);
-              fetchSnapshot();
-            });
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            
+            if (data.x !== undefined && data.y !== undefined) {
+              const canvasModeEl = document.querySelector('input[name="canvas_mode"]:checked');
+              const canvasMode = canvasModeEl ? canvasModeEl.value : 'health';
+              
+              const payload = {};
+              if (canvasMode === 'gate') {
+                payload.gate_x = data.x;
+                payload.gate_y = data.y;
+              } else {
+                payload.monitor_x = data.x;
+                payload.monitor_y = data.y;
+              }
+              
+              fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              })
+              .then(res => res.json())
+              .then(configData => {
+                populateForm(configData.config);
+                fetchSnapshot();
+                showToast(`Coordinates snapped to mouse (${data.x}, ${data.y})!`, 'success');
+              })
+              .catch(err => showToast("Error saving coordinates: " + err, "error"));
+            } else {
+              showToast("Failed to read mouse position.", "error");
+            }
           })
           .catch(err => {
-            showToast("Failed to read mouse position: " + err, "error");
-          })
-          .finally(() => {
-            snapMouseBtn.disabled = false;
-            snapMouseBtn.innerText = "Target Under Mouse";
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            showToast("Error fetching mouse: " + err, "error");
           });
       }
     }, 1000);
   });
 
-  const autoDetectBtn = document.getElementById('auto-detect-btn');
-  if (autoDetectBtn) {
-    autoDetectBtn.addEventListener('click', () => {
-      autoDetectBtn.disabled = true;
-      autoDetectBtn.innerText = "Searching for game window...";
-      fetch('/api/autodetect_game_window', { method: 'POST' })
+  const aiTrainBtn = document.getElementById('ai-train-coords-btn');
+  if (aiTrainBtn) {
+    aiTrainBtn.addEventListener('click', () => {
+      aiTrainBtn.disabled = true;
+      aiTrainBtn.innerText = "🤖 Capturing screen & analyzing with Vision AI...";
+      fetch('/api/llm/train_coordinates', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
-          if (data.success) {
-            showToast(`Successfully detected "${data.title}"!\nCoordinates calibrated.`, "success");
-            // Reload status, form values, and snapshot preview
-            fetch('/api/status')
-              .then(res => res.json())
-              .then(statusData => {
-                populateForm(statusData.config);
-                fetchSnapshot();
-              });
+          if (data.status === "success") {
+            showToast(`Successfully trained coordinates via AI!`, "success");
+            populateForm(data.config);
+            fetchSnapshot();
           } else {
-            showToast("Detection failed: " + (data.error || "No known game window found."), "error");
+            showToast("AI Training failed: " + (data.error || "Vision model failed."), "error");
           }
-          autoDetectBtn.disabled = false;
-          autoDetectBtn.innerText = "⚡ Auto-detect ARPG Game Coordinates";
         })
-        .catch(err => {
-          showToast("Error trying to auto-detect game window: " + err, "error");
-          autoDetectBtn.disabled = false;
-          autoDetectBtn.innerText = "⚡ Auto-detect ARPG Game Coordinates";
+        .catch(err => showToast("Error connecting to AI: " + err, "error"))
+        .finally(() => {
+          aiTrainBtn.disabled = false;
+          aiTrainBtn.innerText = "🤖 AI Vision: Train Coordinates from Game Screen";
+        });
+    });
+  }
+
+  const aiOptimizeBtn = document.getElementById('ai-optimize-btn');
+  if (aiOptimizeBtn) {
+    aiOptimizeBtn.addEventListener('click', () => {
+      aiOptimizeBtn.disabled = true;
+      aiOptimizeBtn.innerText = "🤖 Analyzing telemetry via Llama3...";
+      fetch('/api/llm/optimize', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === "success") {
+            showToast(`AI successfully optimized thresholds!\nRatio: ${data.thresholds.ratio_threshold}, Red: ${data.thresholds.red_threshold}`, "success");
+            populateForm(data.config);
+          } else {
+            showToast("AI Optimization failed: " + (data.error || "No telemetry found."), "error");
+          }
+        })
+        .catch(err => showToast("Error connecting to AI: " + err, "error"))
+        .finally(() => {
+          aiOptimizeBtn.disabled = false;
+          aiOptimizeBtn.innerText = "🤖 AI Optimize Thresholds";
         });
     });
   }

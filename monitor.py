@@ -15,6 +15,7 @@ from core.config import ConfigMixin
 from core.scanner import ScannerMixin
 from core.ocr import OCRMixin
 from core.trigger import TriggerMixin
+from core.llm import LLMMixin
 
 # Configure logging using absolute path and RotatingFileHandler
 log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
@@ -32,7 +33,7 @@ logging.basicConfig(
     ]
 )
 
-class SanguineHealthMonitor(ConfigMixin, ScannerMixin, OCRMixin, TriggerMixin):
+class SanguineHealthMonitor(ConfigMixin, ScannerMixin, OCRMixin, TriggerMixin, LLMMixin):
     def __init__(self, config_path='config.json'):
         self.config_path = config_path
         self.config = {}
@@ -138,14 +139,19 @@ class SanguineHealthMonitor(ConfigMixin, ScannerMixin, OCRMixin, TriggerMixin):
                         health_percent = max(0, min(100, health_percent))
                     ui_suspended = False
                     if gate_enabled:
-                        gate_img = self.grab_from_socket(gate_x, gate_y, 1, 1)
+                        gate_size = 40
+                        half_g = gate_size // 2
+                        g_left = max(0, gate_x - half_g)
+                        g_top = max(0, gate_y - half_g)
+                        gate_img = self.grab_from_socket(g_left, g_top, gate_size, gate_size)
                         if gate_img:
-                            gr, gg, gb = gate_img.getpixel((0, 0))[:3]
-                            diff = abs(gr - gate_r) + abs(gg - gate_g) + abs(gb - gate_b)
-                            if diff > gate_tolerance:
+                            gate_arr = np.asarray(gate_img)[:, :, :3].astype(int)
+                            diffs = np.abs(gate_arr[:, :, 0] - gate_r) + np.abs(gate_arr[:, :, 1] - gate_g) + np.abs(gate_arr[:, :, 2] - gate_b)
+                            min_diff = np.min(diffs)
+                            if min_diff > gate_tolerance:
                                 ui_suspended = True
                                 if not self.ui_suspended:
-                                    self.add_log(f'Monitoring suspended: UI menu detected (Gate color diff: {diff})', 'WARNING')
+                                    self.add_log(f'Monitoring suspended: UI menu detected (Gate color diff: {min_diff})', 'WARNING')
                             elif self.ui_suspended:
                                 self.add_log('Monitoring resumed: active gameplay detected.', 'INFO')
                         else:
@@ -186,15 +192,23 @@ class SanguineHealthMonitor(ConfigMixin, ScannerMixin, OCRMixin, TriggerMixin):
                             health_percent = max(0, min(100, health_percent))
                             ui_suspended = False
                             if gate_enabled:
-                                gate_monitor = {'top': gate_y, 'left': gate_x, 'width': 1, 'height': 1}
+                                gate_size = 40
+                                half_g = gate_size // 2
+                                gate_monitor = {
+                                    'top': max(0, gate_y - half_g), 
+                                    'left': max(0, gate_x - half_g), 
+                                    'width': gate_size, 
+                                    'height': gate_size
+                                }
                                 sct_gate = sct_instance.grab(gate_monitor)
-                                gate_img = Image.frombytes('RGB', (1, 1), sct_gate.bgra, 'raw', 'BGRX')
-                                gr, gg, gb = gate_img.getpixel((0, 0))[:3]
-                                diff = abs(gr - gate_r) + abs(gg - gate_g) + abs(gb - gate_b)
-                                if diff > gate_tolerance:
+                                gate_img = Image.frombytes('RGB', (sct_gate.width, sct_gate.height), sct_gate.bgra, 'raw', 'BGRX')
+                                gate_arr = np.asarray(gate_img)[:, :, :3].astype(int)
+                                diffs = np.abs(gate_arr[:, :, 0] - gate_r) + np.abs(gate_arr[:, :, 1] - gate_g) + np.abs(gate_arr[:, :, 2] - gate_b)
+                                min_diff = np.min(diffs)
+                                if min_diff > gate_tolerance:
                                     ui_suspended = True
                                     if not self.ui_suspended:
-                                        self.add_log(f'Monitoring suspended: UI menu detected (Gate color diff: {diff})', 'WARNING')
+                                        self.add_log(f'Monitoring suspended: UI menu detected (Gate color diff: {min_diff})', 'WARNING')
                                 elif self.ui_suspended:
                                     self.add_log('Monitoring resumed: active gameplay detected.', 'INFO')
                         except Exception as e:
@@ -241,13 +255,21 @@ class SanguineHealthMonitor(ConfigMixin, ScannerMixin, OCRMixin, TriggerMixin):
                         health_percent = max(0, min(100, health_percent))
                         ui_suspended = False
                         if gate_enabled:
-                            if 0 <= gate_x < img.width and 0 <= gate_y < img.height:
-                                gr, gg, gb = img.getpixel((gate_x, gate_y))[:3]
-                                diff = abs(gr - gate_r) + abs(gg - gate_g) + abs(gb - gate_b)
-                                if diff > gate_tolerance:
+                            gate_size = 40
+                            half_g = gate_size // 2
+                            gx_start = max(0, gate_x - half_g)
+                            gy_start = max(0, gate_y - half_g)
+                            gx_end = min(img.width, gate_x + half_g)
+                            gy_end = min(img.height, gate_y + half_g)
+                            if gx_end > gx_start and gy_end > gy_start:
+                                gate_box = img.crop((gx_start, gy_start, gx_end, gy_end))
+                                gate_arr = np.asarray(gate_box)[:, :, :3].astype(int)
+                                diffs = np.abs(gate_arr[:, :, 0] - gate_r) + np.abs(gate_arr[:, :, 1] - gate_g) + np.abs(gate_arr[:, :, 2] - gate_b)
+                                min_diff = np.min(diffs)
+                                if min_diff > gate_tolerance:
                                     ui_suspended = True
                                     if not self.ui_suspended:
-                                        self.add_log(f'Monitoring suspended: UI menu detected (Gate color diff: {diff})', 'WARNING')
+                                        self.add_log(f'Monitoring suspended: UI menu detected (Gate color diff: {min_diff})', 'WARNING')
                                 elif self.ui_suspended:
                                     self.add_log('Monitoring resumed: active gameplay detected.', 'INFO')
                             else:

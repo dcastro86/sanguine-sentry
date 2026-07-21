@@ -132,13 +132,14 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             return
         elif parsed_url.path == "/api/debug_log":
             try:
-                log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+                # debug.log is in the root directory (parent of api/)
+                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "debug.log")
                 if os.path.exists(log_path):
                     with open(log_path, "r", encoding="utf-8") as f:
                         lines = f.readlines()[-200:]
                         content = "".join(lines)
                 else:
-                    content = "No debug.log file exists in the directory yet. Perform some actions to generate logs."
+                    content = f"No debug.log file exists at {log_path} yet. Perform some actions to generate logs."
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -200,7 +201,57 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             crop_h = int(body.get("h", 150))
             name = body.get("name", "health_globe.png")
             success = monitor_instance.save_template_from_screen(crop_x, crop_y, crop_w, crop_h, name)
-            self.send_json({"status": "success" if success else "failed"})
+            if success:
+                self.send_json({"status": "success"})
+            else:
+                self.send_json({"status": "failed", "error": "Failed to save template."})
+            return
+        elif parsed_url.path == "/api/llm/optimize":
+            with monitor_instance.lock:
+                history = list(monitor_instance.color_history)
+            if not history:
+                self.send_json({"status": "failed", "error": "No telemetry history available to optimize."})
+                return
+            new_thresholds = monitor_instance.optimize_thresholds(history)
+            if new_thresholds:
+                with monitor_instance.lock:
+                    if "ratio_threshold" in new_thresholds:
+                        monitor_instance.config["ratio_threshold"] = new_thresholds["ratio_threshold"]
+                    if "red_threshold" in new_thresholds:
+                        monitor_instance.config["red_threshold"] = new_thresholds["red_threshold"]
+                    monitor_instance.save_config()
+                self.send_json({"status": "success", "config": monitor_instance.config, "thresholds": new_thresholds})
+            else:
+                self.send_json({"status": "failed", "error": "LLM failed to return optimized thresholds."})
+            return
+
+        elif parsed_url.path == "/api/llm/train_coordinates":
+            img = None
+            if monitor_instance.detect_session_type() in ['x11', 'windows']:
+                try:
+                    import mss
+                    with mss.mss() as sct:
+                        sct_img = sct.grab(sct.monitors[0])
+                        from PIL import Image
+                        img = Image.frombytes('RGB', sct_img.size, sct_img.bgra, 'raw', 'BGRX')
+                except Exception as e:
+                    logging.error(f"Failed to grab mss screenshot for LLM: {e}")
+            else:
+                img = monitor_instance.grab_wayland_screenshot()
+
+            if img:
+                coords = monitor_instance.analyze_gameplay_screenshot(img)
+                if coords:
+                    with monitor_instance.lock:
+                        for k, v in coords.items():
+                            if k in ["monitor_x", "monitor_y", "rect_width", "rect_height", "gate_x", "gate_y"]:
+                                monitor_instance.config[k] = v
+                        monitor_instance.save_config()
+                    self.send_json({"status": "success", "config": monitor_instance.config, "coords": coords})
+                else:
+                    self.send_json({"status": "failed", "error": "LLM failed to return valid coordinates."})
+            else:
+                self.send_json({"status": "failed", "error": "Failed to capture screenshot for training."})
             return
 
         self.send_error_response("Endpoint not found", 404)
