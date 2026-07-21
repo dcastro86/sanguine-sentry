@@ -338,16 +338,17 @@ def main():
             print("Sanguine Sentry Core Active.")
             print("---------------------------------------------")
             token = monitor_instance.config.get("api_token", "")
-            dashboard_url = f"http://{display_host}:{port}/?token={token}"
+            dashboard_url = f"http://{display_host}:{port}/"
+            auth_launch_url = f"{dashboard_url}?token={token}" if token else dashboard_url
             print(f"Access the dashboard at: {dashboard_url}")
             print("---------------------------------------------")
             
             # Automatically open browser (prefer ungoogled-chromium if available)
             try:
                 try:
-                    webbrowser.get("chromium").open(dashboard_url)
+                    webbrowser.get("chromium").open(auth_launch_url)
                 except Exception:
-                    webbrowser.open(dashboard_url)
+                    webbrowser.open(auth_launch_url)
             except Exception as e:
                 print(f"Could not open browser automatically: {e}")
                 
