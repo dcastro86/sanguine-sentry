@@ -18,20 +18,29 @@ from core.trigger import TriggerMixin
 from core.llm import LLMMixin
 
 # Configure logging using absolute path and RotatingFileHandler
-log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.handlers.RotatingFileHandler(
-            log_file_path,
-            maxBytes=5 * 1024 * 1024, # 5MB limit
-            backupCount=3,
-            encoding="utf-8"
+def setup_logging():
+    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+    handlers = [logging.StreamHandler(sys.stdout)]
+    try:
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                log_file_path,
+                maxBytes=5 * 1024 * 1024, # 5MB limit
+                backupCount=3,
+                encoding="utf-8"
+            )
         )
-    ]
-)
+    except Exception:
+        # Fallback to stdout logging if log file is unwritable
+        pass
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=handlers
+    )
+
+setup_logging()
 
 class SanguineHealthMonitor(ConfigMixin, ScannerMixin, OCRMixin, TriggerMixin, LLMMixin):
     def __init__(self, config_path='config.json'):
