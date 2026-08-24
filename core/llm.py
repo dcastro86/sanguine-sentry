@@ -4,7 +4,7 @@ import base64
 import logging
 
 OLLAMA_URL = "http://192.168.50.71:11434/api/generate"
-TEXT_MODEL = "llama3.1:latest"
+TEXT_MODEL = "hermes3:8b"
 VISION_MODEL = "llava"
 
 class LLMMixin:
