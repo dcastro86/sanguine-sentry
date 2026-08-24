@@ -1,9 +1,10 @@
+import os
 import json
 import urllib.request
 import base64
 import logging
 
-OLLAMA_URL = "http://192.168.50.71:11434/api/generate"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 TEXT_MODEL = "hermes3:8b"
 VISION_MODEL = "llava"
 
@@ -49,7 +50,7 @@ Telemetry:
                 return new_thresholds
         except Exception as e:
             logging.error(f"Ollama text model error: {e}")
-            self.add_log(f"Ollama text model error (Make sure '{TEXT_MODEL}' is pulled on 192.168.50.71): {e}", "ERROR")
+            self.add_log(f"Ollama text model error (Make sure '{TEXT_MODEL}' is pulled on Ollama host): {e}", "ERROR")
             return None
 
     def analyze_gameplay_screenshot(self, image):
