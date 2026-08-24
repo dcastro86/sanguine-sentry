@@ -47,7 +47,7 @@ jobs:
           cargo build --release
 
       - name: Create Release and Upload Asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: sanguine_wayland_capture/target/release/sanguine_wayland_capture
         env:
