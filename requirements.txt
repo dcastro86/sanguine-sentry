@@ -1,5 +1,5 @@
 pynput>=1.7.6
 Pillow>=10.2.0
-opencv-python>=4.9.0.80
+opencv-python>=5.0.0.93
 numpy>=1.26.4
 mss>=9.0.1
