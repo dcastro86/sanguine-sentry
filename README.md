@@ -1,6 +1,10 @@
 # Sanguine Sentry 🍷🛡️
 
-Sanguine Sentry is an advanced auto-flask calibration and health-globe monitoring utility designed primarily for action RPGs (such as *Path of Exile*) on Linux and Windows. It features a robust Python monitoring service, a high-performance Wayland/Pipewire screen capture daemon written in Rust, and a responsive web dashboard for real-time calibration, visual targeting, and telemetry.
+Sanguine Sentry is an advanced auto-flask calibration and health-globe monitoring utility for action RPGs on Linux and Windows.
+
+> **Do not use it in Path of Exile or any other online game whose terms forbid input automation.** It reads the screen and presses keys on its own, which Path of Exile's terms of use prohibit (one server action per keypress) and can get an account banned. It is intended for offline or single-player games and for testing.
+
+It features a robust Python monitoring service, a high-performance Wayland/Pipewire screen capture daemon written in Rust, and a responsive web dashboard for real-time calibration, visual targeting, and telemetry.
 
 ---
 
@@ -71,7 +75,7 @@ The python backend will automatically attempt to spawn and establish socket comm
 
 ### 3. Run the Server
 ```bash
-python server.py
+python api/server.py
 ```
 This starts the monitoring engine and spins up the web dashboard on [http://localhost:8080](http://localhost:8080).
 
@@ -109,7 +113,7 @@ The web dashboard provides:
 ## Security & Sandbox
 
 To ensure local safe execution, Sanguine Sentry implements the following protections:
-1. **API Token Validation:** A cryptographically secure random API token is generated on startup. Every front-end API request must authenticate with an `X-API-Token` header.
+1. **API Token Validation:** A cryptographically secure random API token is generated the first time the server starts without one, and saved in `config.json` (gitignored, `0600`) for later starts. Every front-end API request must authenticate with an `X-API-Token` header.
 2. **DNS Rebinding Shield:** Strict validation of the HTTP `Host` header to reject unauthorized external requests.
 3. **Execution Splitting:** Employs argument-list execution via `shlex` and drops shell invocations (`shell=False`) for command triggers.
 4. **Local Socket Hardening:** Spawns socket files inside private secure directories (`$XDG_RUNTIME_DIR` or `~/.sanguine_sentry.sock`) with strict `0600` permissions and checks client peer credentials (`socket.peer_cred()`) to permit only matching local users.
