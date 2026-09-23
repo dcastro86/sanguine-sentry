@@ -65,7 +65,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. (Wayland only) Install portalgrab
-Under Wayland, fast capture comes from [portalgrab](https://github.com/dcastro86/portalgrab). Install it and enable its user service by following its README. Sanguine Sentry uses it automatically whenever `$XDG_RUNTIME_DIR/portalgrab.sock` exists; otherwise it falls back to `spectacle` screenshots.
+Under Wayland, fast capture comes from [portalgrab](https://github.com/dcastro86/portalgrab). Install it and its user service by following its README; you don't need to enable the service. When `api/server.py` starts under Wayland, it starts the service if no portalgrab daemon is already running, and stops it again on exit. A daemon you started yourself is left running. Without portalgrab, capture falls back to `spectacle` screenshots.
 
 ### 3. Run the Server
 ```bash

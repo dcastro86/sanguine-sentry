@@ -43,3 +43,27 @@ def test_grab_from_socket(mocker):
     mock_client.connect.assert_called_with('/fake/path.sock')
     mock_client.sendall.assert_called_with(b"0 0 10 10\n")
     mock_client.close.assert_called_once()
+
+
+def test_start_portalgrab_only_claims_what_it_started(mocker):
+    import api.server as server
+    scanner = mocker.Mock(detect_session_type=mocker.Mock(return_value='wayland'),
+                          get_socket_path=mocker.Mock(return_value='/fake/portalgrab.sock'))
+    run = mocker.patch('api.server.subprocess.run')
+
+    # Not running anywhere: is-active fails, start succeeds -> we own it.
+    mocker.patch('api.server.os.path.exists', return_value=False)
+    run.side_effect = [mocker.Mock(returncode=3), mocker.Mock(returncode=0)]
+    assert server.start_portalgrab(scanner) is True
+    assert run.call_args.args[0] == ['systemctl', '--user', 'start', 'portalgrab']
+
+    # Socket already there (someone else's daemon) -> never touch systemd.
+    run.reset_mock(side_effect=True)
+    mocker.patch('api.server.os.path.exists', return_value=True)
+    assert server.start_portalgrab(scanner) is False
+    run.assert_not_called()
+
+    # Not Wayland -> nothing to do.
+    scanner.detect_session_type.return_value = 'x11'
+    assert server.start_portalgrab(scanner) is False
+    run.assert_not_called()

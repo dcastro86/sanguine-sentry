@@ -26,7 +26,7 @@ are allowed without a scope change here. That is a deliberate choice (2026-09-15
 beyond `127.0.0.1` by default; loosening the token or DNS-rebinding checks; a frontend build step.
 
 **Status:** not running. Auto-trigger is `enabled: false` in `config.json`, `debug.log` was last written
-2026-07-18, and the last feature work was 2026-07-21. 9 tests pass. Wayland capture moved to portalgrab
+2026-07-18 (2026-09-23 entries are portalgrab integration tests, not use), and the last feature work was 2026-07-21. 9 tests pass. Wayland capture moved to portalgrab
 2026-09-23.
 
 ## What this is
@@ -41,7 +41,7 @@ Three components:
 
 - **`core/`** — the monitoring engine, split by concern: `scanner.py` (NumPy-vectorized pixel/globe analysis), `trigger.py` (pynput/xdotool action firing), `config.py`, `ocr.py`, `llm.py` (optional Ollama-based threshold auto-tuning — `OLLAMA_URL` env var, default `http://localhost:11434/api/generate`, model `llama3.1`/`llava`). `monitor.py` at the root composes these into the monitoring daemon/loop.
 - **`api/server.py`** — HTTP API + serves the dashboard (`api/web/`), binds `127.0.0.1:8080` by default (see `bind_ip`/`port` in `config.json`). Has an API token (generated once with `secrets.token_hex(16)` when `config.json` has none, then persisted there and reused on later starts) and `Host` header verification against DNS rebinding — this is a locally-run tool with sensitive I/O access (simulated input, arbitrary configured OS commands via `xdotool`), so don't loosen the auth/rebinder checks without a clear reason.
-- **Wayland capture** — external: [portalgrab](https://github.com/dcastro86/portalgrab), a separate repo and user service (spun out of this repo's old `sanguine_wayland_capture` crate on 2026-09-23). `core/scanner.py` talks to `$XDG_RUNTIME_DIR/portalgrab.sock` when it exists and falls back to `spectacle` otherwise; X11/Windows use `mss`. Python never spawns it.
+- **Wayland capture** — external: [portalgrab](https://github.com/dcastro86/portalgrab), a separate repo and user service (spun out of this repo's old `sanguine_wayland_capture` crate on 2026-09-23). `core/scanner.py` talks to `$XDG_RUNTIME_DIR/portalgrab.sock` when it exists and falls back to `spectacle` otherwise; X11/Windows use `mss`. `api/server.py` `main()` starts the `portalgrab` user service at launch under Wayland (`start_portalgrab`) and stops it on exit only if it started it; the unit is deliberately not enabled at login.
 - **`web/`** — dashboard frontend: vanilla HTML/CSS/JS, no build step, no framework.
 - Config is read/written at runtime to `config.json` (see `config.json.example` for the schema/defaults — documented in README's Configuration table).
 

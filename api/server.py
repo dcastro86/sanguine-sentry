@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 import urllib.parse
 import sys
+import subprocess
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from monitor import SanguineHealthMonitor
 PORT = 8080
@@ -306,12 +307,29 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"Internal server error serving static file: {e}".encode("utf-8"))
 
+def start_portalgrab(scanner):
+    """Under Wayland, start the portalgrab user service unless a daemon is already up.
+    Returns True only when this call started it, so shutdown stops only what we started."""
+    if scanner.detect_session_type() != 'wayland' or os.path.exists(scanner.get_socket_path()):
+        return False
+    try:
+        if subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'portalgrab'], timeout=10).returncode == 0:
+            return False
+        return subprocess.run(['systemctl', '--user', 'start', 'portalgrab'], timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False  # no systemd or no unit: capture falls back to spectacle
+
+def stop_portalgrab(started):
+    if started:
+        subprocess.run(['systemctl', '--user', 'stop', 'portalgrab'], timeout=10)
+
 def main():
     global monitor_instance
     print("Initializing Sanguine Sentry HTTP Monitor...")
     
     # Initialize monitor instance
     monitor_instance = SanguineHealthMonitor()
+    portalgrab_started = start_portalgrab(monitor_instance)
     
     # Auto-start monitoring if enabled in config
     if monitor_instance.config.get("enabled", False):
@@ -383,6 +401,7 @@ def main():
     except Exception:
         pass
     finally:
+        stop_portalgrab(portalgrab_started)
         if monitor_instance:
             monitor_instance.stop_monitoring()
             # Stop the pynput hotkey listener if it's running
