@@ -26,7 +26,7 @@ are allowed without a scope change here. That is a deliberate choice (2026-09-15
 beyond `127.0.0.1` by default; loosening the token or DNS-rebinding checks; a frontend build step.
 
 **Status:** not running. Auto-trigger is `enabled: false` in `config.json`, `debug.log` was last written
-2026-07-18 (2026-09-23 entries are portalgrab integration tests, not use), and the last feature work was 2026-07-21. 9 tests pass. Wayland capture moved to portalgrab
+2026-07-18 (2026-09-23 entries are portalgrab integration tests, not use), and the last feature work was 2026-07-21. 10 tests pass. Wayland capture moved to portalgrab
 2026-09-23.
 
 ## What this is
