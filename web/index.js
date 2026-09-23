@@ -624,7 +624,7 @@ function fetchStatus() {
                       `Active Capture: High-speed Socket Daemon (Fastest sub-millisecond, zero-copy PipeWire & DMA-BUF)\n\n` +
                       `Supported Platforms:\n\n` +
                       `[LINUX]\n` +
-                      `- Wayland Daemon (Active): Used automatically under Wayland when the background UNIX socket (/tmp/sanguine_sentry.sock) is active. Zero-copy GPU memory access.\n` +
+                      `- Wayland Daemon (Active): Used automatically under Wayland when the portalgrab daemon socket ($XDG_RUNTIME_DIR/portalgrab.sock) is active. Zero-copy GPU memory access.\n` +
                       `- Wayland Fallback (Inactive): Used under Wayland when the Unix socket daemon is stopped (falls back to spectacle screenshots).\n   (relies on spectacle screenshots).\n` +
                       `- X11 (Inactive): Used automatically when your desktop environment is running under an X11 compositor (uses native mss).\n\n` +
                       `[WINDOWS]\n` +

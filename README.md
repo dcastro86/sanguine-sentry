@@ -12,7 +12,7 @@ It features a robust Python monitoring service, a high-performance Wayland/Pipew
 
 - **🎯 Real-Time Visual Sensor & Cropping**: Use the dashboard to select and crop your health globe down to a precise visual target.
 - **⚡ Dual Capture Engine**:
-  - **Linux Wayland**: Rust-based Pipewire/zbus capture (`sanguine_wayland_capture`) for high-frame-rate, hardware-accelerated screenshots.
+  - **Linux Wayland**: PipeWire capture through [portalgrab](https://github.com/dcastro86/portalgrab) for high-frame-rate, hardware-accelerated screenshots.
   - **Linux X11 & Windows**: Fast native cross-platform fallback captures.
 - **🧠 Flexible Analysis Logic**:
   - **Percent Mode**: Computes the ratio of red pixels to background pixels in a column crop to determine your current health percentage.
@@ -43,7 +43,7 @@ graph TD
 ```
 
 - **Backend (`monitor.py`, `server.py`)**: Runs a multithreaded Python service containing the monitoring daemon, the keyboard/mouse event listener, and a lightweight web server (on port `8080`).
-- **Rust Sub-project (`sanguine_wayland_capture/`)**: Compiles into a native binary that interfaces directly with Pipewire streams via D-Bus portals (`xdg-desktop-portal`), resolving screenshot limitations on modern Linux distributions utilizing Wayland.
+- **Wayland capture ([portalgrab](https://github.com/dcastro86/portalgrab))**: A separate daemon that holds an `xdg-desktop-portal` screen cast open and serves screen regions over a Unix socket, which gets around screenshot limits on Wayland.
 - **Frontend Dashboard (`web/`)**: Vanilla HTML5, CSS, and JS dashboard using pure CSS styling, SVG icons, and standard Web APIs.
 
 ---
@@ -52,7 +52,7 @@ graph TD
 
 ### Prerequisites
 - **Python 3.10+** (with `pip` and virtual environment support)
-- **Rust Toolchain** (if compiling the Wayland capture agent)
+- **[portalgrab](https://github.com/dcastro86/portalgrab)** (Wayland only)
 - System libraries: OpenCV dependencies, `xdotool` (optional, for custom commands)
 
 ### 1. Clone & Set Up Virtual Environment
@@ -64,14 +64,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. (Optional) Compile Wayland Capture Daemon
-If you are running on Linux under a Wayland session, you can download the pre-compiled `sanguine_wayland_capture` binary directly from the **Releases** page on GitHub and place it in the root folder. Alternatively, you can compile it manually:
-```bash
-cd sanguine_wayland_capture
-cargo build --release
-cd ..
-```
-The python backend will automatically attempt to spawn and establish socket communication with this binary if a Wayland session is detected.
+### 2. (Wayland only) Install portalgrab
+Under Wayland, fast capture comes from [portalgrab](https://github.com/dcastro86/portalgrab). Install it and enable its user service by following its README. Sanguine Sentry uses it automatically whenever `$XDG_RUNTIME_DIR/portalgrab.sock` exists; otherwise it falls back to `spectacle` screenshots.
 
 ### 3. Run the Server
 ```bash
@@ -116,7 +110,7 @@ To ensure local safe execution, Sanguine Sentry implements the following protect
 1. **API Token Validation:** A cryptographically secure random API token is generated the first time the server starts without one, and saved in `config.json` (gitignored, `0600`) for later starts. Every front-end API request must authenticate with an `X-API-Token` header.
 2. **DNS Rebinding Shield:** Strict validation of the HTTP `Host` header to reject unauthorized external requests.
 3. **Execution Splitting:** Employs argument-list execution via `shlex` and drops shell invocations (`shell=False`) for command triggers.
-4. **Local Socket Hardening:** Spawns socket files inside private secure directories (`$XDG_RUNTIME_DIR` or `~/.sanguine_sentry.sock`) with strict `0600` permissions and checks client peer credentials (`socket.peer_cred()`) to permit only matching local users.
+4. **Local Socket Hardening:** The Wayland capture socket belongs to portalgrab. It lives in `$XDG_RUNTIME_DIR` with `0600` permissions and accepts only clients running as the same user.
 
 ---
 

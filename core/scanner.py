@@ -56,9 +56,9 @@ class ScannerMixin:
             return self._cached_socket_path
         runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
         if runtime_dir and os.path.isdir(runtime_dir):
-            self._cached_socket_path = os.path.join(runtime_dir, 'sanguine_sentry.sock')
+            self._cached_socket_path = os.path.join(runtime_dir, 'portalgrab.sock')
         else:
-            self._cached_socket_path = os.path.expanduser('~/.sanguine_sentry.sock')
+            self._cached_socket_path = os.path.expanduser('~/.portalgrab.sock')
         return self._cached_socket_path
 
     def is_socket_active(self):
