@@ -610,7 +610,7 @@ function fetchStatus() {
                     `Supported Platforms:\n\n` +
                     `[LINUX]\n` +
                     `- Linux X11 (Active): Used automatically when your XDG_SESSION_TYPE environment variable is set to 'x11'. Grabs pixels natively with no subprocess overhead.\n` +
-                    `- Wayland Daemon (Inactive): Used under Wayland sessions when the Rust PipeWire & DMA-BUF socket daemon is running.\n` +
+                    `- Wayland Daemon (Inactive): Used under Wayland sessions when the portalgrab daemon is running.\n` +
                     `- Wayland Fallback (Inactive): Used under Wayland sessions when the socket daemon is stopped (relies on spectacle screenshots).\n\n` +
                     `[WINDOWS]\n` +
                     `- Windows (Inactive): Grabs screen natively via Win32 GDI calls (mss) with sub-millisecond speed and emulates inputs natively using Win32 API hooks (pynput), requiring no extra capture daemons. Must run Sanguine Sentry as Admin if the target game is running with elevated privileges.`;
@@ -621,10 +621,10 @@ function fetchStatus() {
             tooltip = `[AUTODETECTED CONFIGURATION]\n` +
                       `This capture mode setting is fully autodetected on system startup.\n\n` +
                       `Current Session: WAYLAND\n` +
-                      `Active Capture: High-speed Socket Daemon (Fastest sub-millisecond, zero-copy PipeWire & DMA-BUF)\n\n` +
+                      `Active Capture: portalgrab socket daemon (fastest; PipeWire screen cast)\n\n` +
                       `Supported Platforms:\n\n` +
                       `[LINUX]\n` +
-                      `- Wayland Daemon (Active): Used automatically under Wayland when the portalgrab daemon socket ($XDG_RUNTIME_DIR/portalgrab.sock) is active. Zero-copy GPU memory access.\n` +
+                      `- Wayland Daemon (Active): Used automatically under Wayland when the portalgrab daemon socket ($XDG_RUNTIME_DIR/portalgrab.sock) is active.\n` +
                       `- Wayland Fallback (Inactive): Used under Wayland when the Unix socket daemon is stopped (falls back to spectacle screenshots).\n   (relies on spectacle screenshots).\n` +
                       `- X11 (Inactive): Used automatically when your desktop environment is running under an X11 compositor (uses native mss).\n\n` +
                       `[WINDOWS]\n` +
@@ -638,7 +638,7 @@ function fetchStatus() {
                       `Active Capture: Spectacle Fallback (Slow ~100-200ms per frame, spawns CLI subprocesses)\n\n` +
                       `Supported Platforms:\n\n` +
                       `[LINUX]\n` +
-                      `- Wayland Fallback (Active): Used automatically under Wayland when the PipeWire & DMA-BUF socket daemon is NOT running.\n` +
+                      `- Wayland Fallback (Active): Used automatically under Wayland when the portalgrab daemon is NOT running.\n` +
                       `- Wayland Daemon (Inactive): Used automatically under Wayland if you start the Rust capture daemon (binds to Unix sockets).\n` +
                       `- X11 (Inactive): Used automatically when your desktop environment is running under an X11 compositor (uses native mss).\n\n` +
                       `[WINDOWS]\n` +
