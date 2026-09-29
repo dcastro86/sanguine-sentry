@@ -19,3 +19,7 @@ gate "portalgrab is not started at login on this machine (the server starts it)"
 
 gate "the server starts portalgrab on launch and stops only what it started" \
   "bash tests/portalgrab_lifecycle.sh | grep -q '^PORTALGRAB-LIFECYCLE-OK$'"
+
+# CLAUDE.md loads into every agent session. Findings and measurements go to docs/; CLAUDE.md gets
+# only the rule they produced. Raise this limit only by moving something out, never by editing it.
+gate "CLAUDE.md stays under 24 KB" "[ \$(wc -c < CLAUDE.md) -le 24576 ] && echo SIZE_OK | grep -q SIZE_OK"
