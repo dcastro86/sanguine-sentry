@@ -425,7 +425,7 @@ function setupFormListeners() {
   if (aiOptimizeBtn) {
     aiOptimizeBtn.addEventListener('click', () => {
       aiOptimizeBtn.disabled = true;
-      aiOptimizeBtn.innerText = "🤖 Analyzing telemetry via Llama3...";
+      aiOptimizeBtn.innerText = "🤖 Analyzing telemetry via the LLM...";
       fetch('/api/llm/optimize', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
