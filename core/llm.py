@@ -4,13 +4,28 @@ import urllib.request
 import base64
 import logging
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-TEXT_MODEL = "hermes3:8b"
-VISION_MODEL = "llava"
+# Any OpenAI-compatible server; the default is the Unraid llama-swap, so the in-game calls stay off the workstation GPU.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://192.168.50.71:9292/v1")
+TEXT_MODEL = os.getenv("LLM_MODEL", "deepseek-r1-8b")
+VISION_MODEL = os.getenv("LLM_VISION_MODEL", "qwen3-vl")
+
+def _chat_json(model, content, schema, timeout):
+    """One chat completion constrained to `schema`. Returns the answer text only (a reasoning model's
+    thinking stays in reasoning_content). The timeout covers a model swap on the server (~15-35 s)."""
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "response_format": {"type": "json_schema", "json_schema": {"schema": schema}},
+        # deepseek-r1 can think until the context is full and answer nothing; this caps it (ignored by non-reasoning models).
+        "thinking_budget_tokens": 1024,
+    }
+    req = urllib.request.Request(f"{LLM_BASE_URL}/chat/completions", data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode('utf-8'))["choices"][0]["message"]["content"]
 
 class LLMMixin:
     def optimize_thresholds(self, color_history):
-        """Analyzes recent color telemetry using Ollama (llama3) and returns optimal thresholds."""
+        """Analyzes recent color telemetry using the text LLM and returns optimal thresholds."""
         if not color_history:
             return None
         
@@ -25,36 +40,20 @@ Just return a valid JSON object with no markdown and no extra text, exactly like
 Telemetry:
 {json.dumps(color_history[-30:])}
 """
-        payload = {
-            "model": TEXT_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json"
-        }
-        
+        schema = {"type": "object", "properties": {"ratio_threshold": {"type": "number"}, "red_threshold": {"type": "number"}},
+                  "required": ["ratio_threshold", "red_threshold"]}
         try:
-            self.add_log("Sending telemetry to Ollama for threshold optimization...")
-            req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=15.0) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                response_text = result['response']
-                
-                # Safely extract JSON in case the model used markdown
-                import re
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    response_text = json_match.group(0)
-                    
-                new_thresholds = json.loads(response_text)
-                self.add_log(f"Ollama successfully calculated new thresholds: {new_thresholds}")
-                return new_thresholds
+            self.add_log("Sending telemetry to the LLM for threshold optimization...")
+            new_thresholds = json.loads(_chat_json(TEXT_MODEL, prompt, schema, 120.0))
+            self.add_log(f"LLM successfully calculated new thresholds: {new_thresholds}")
+            return new_thresholds
         except Exception as e:
-            logging.error(f"Ollama text model error: {e}")
-            self.add_log(f"Ollama text model error (Make sure '{TEXT_MODEL}' is pulled on Ollama host): {e}", "ERROR")
+            logging.error(f"LLM text model error: {e}")
+            self.add_log(f"LLM text model error (model '{TEXT_MODEL}' at {LLM_BASE_URL}): {e}", "ERROR")
             return None
 
     def analyze_gameplay_screenshot(self, image):
-        """Analyzes a full screenshot using a hybrid OpenCV + LLaVA approach to find the health globe."""
+        """Analyzes a full screenshot using a hybrid OpenCV + vision-LLM approach to find the health globe."""
         import cv2
         import numpy as np
         import io
@@ -95,7 +94,7 @@ Telemetry:
 
         for (x, y, cw, ch) in candidates:
             # Draw a thick green bounding box around the candidate on the bottom half of the image
-            # We use the bottom half so LLaVA still has enough context of the UI, but it's not a massive 4K image.
+            # We use the bottom half so the vision model still has enough context of the UI, but it's not a massive 4K image.
             annotated_img = bottom_half.copy()
             cv2.rectangle(annotated_img, (x, y), (x + cw, y + ch), (0, 255, 0), 4)
             
@@ -111,46 +110,39 @@ Is the item inside the green box the player's main Health Globe / Health Bar?
 Answer ONLY with a JSON object containing a single boolean field 'is_health_globe', exactly like this:
 {"is_health_globe": true}
 """
-            payload = {
-                "model": VISION_MODEL,
-                "prompt": prompt,
-                "images": [encoded_image],
-                "stream": False,
-                "format": "json"
-            }
-            
+            content = [{"type": "text", "text": prompt},
+                       {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"}}]
+            schema = {"type": "object", "properties": {"is_health_globe": {"type": "boolean"}}, "required": ["is_health_globe"]}
+
             try:
-                req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-                with urllib.request.urlopen(req, timeout=30.0) as response:
-                    result = json.loads(response.read().decode('utf-8'))
-                    ans = json.loads(result['response'])
-                    self.add_log(f"LLaVA answered: {ans}")
+                ans = json.loads(_chat_json(VISION_MODEL, content, schema, 90.0))
+                self.add_log(f"{VISION_MODEL} answered: {ans}")
+                
+                is_health_globe = ans.get('is_health_globe') in [True, "true", "True", "yes"]
+                
+                if not is_health_globe and len(candidates) == 1:
+                    self.add_log(f"{VISION_MODEL} rejected this image, but since it is the ONLY red globe detected by OpenCV, we will assume it is the health globe.")
+                    is_health_globe = True
                     
-                    is_health_globe = ans.get('is_health_globe') in [True, "true", "True", "yes"]
+                if is_health_globe:
+                    absolute_x = x + cw // 2
+                    absolute_y = bottom_half_y + y + ch // 2
                     
-                    if not is_health_globe and len(candidates) == 1:
-                        self.add_log("LLaVA rejected this image, but since it is the ONLY red globe detected by OpenCV, we will assume it is the health globe.")
-                        is_health_globe = True
-                        
-                    if is_health_globe:
-                        absolute_x = x + cw // 2
-                        absolute_y = bottom_half_y + y + ch // 2
-                        
-                        coords = {
-                            "monitor_x": absolute_x,
-                            "monitor_y": absolute_y,
-                            "rect_width": cw + 20,
-                            "rect_height": ch + 20,
-                            "gate_x": absolute_x,
-                            "gate_y": absolute_y - 200 # approximate a static spot above the globe
-                        }
-                        self.add_log(f"Ollama Vision confirmed Health Globe at {coords}")
-                        return coords
+                    coords = {
+                        "monitor_x": absolute_x,
+                        "monitor_y": absolute_y,
+                        "rect_width": cw + 20,
+                        "rect_height": ch + 20,
+                        "gate_x": absolute_x,
+                        "gate_y": absolute_y - 200 # approximate a static spot above the globe
+                    }
+                    self.add_log(f"LLM vision confirmed Health Globe at {coords}")
+                    return coords
             except Exception as e:
-                logging.error(f"Ollama vision model error: {e}")
+                logging.error(f"LLM vision model error: {e}")
                 
         if len(candidates) == 0:
             self.add_log(f"OpenCV could not find any red globe candidates.", "ERROR")
         else:
-            self.add_log(f"Ollama Vision could not confirm any candidates.", "ERROR")
+            self.add_log(f"LLM vision could not confirm any candidates.", "ERROR")
         return None
