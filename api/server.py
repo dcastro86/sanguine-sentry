@@ -14,6 +14,9 @@ import subprocess
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from monitor import SanguineHealthMonitor
 PORT = 8080
+# One per process, never saved: the browser is launched with it in ?token= (start_server), and the
+# dashboard keeps it in localStorage, so it never needs to outlive the run or touch config.json.
+API_TOKEN = secrets.token_hex(16)
 monitor_instance = None
 last_request_time = 0.0
 
@@ -42,14 +45,7 @@ class SanguineHTTPRequestHandler(BaseHTTPRequestHandler):
             return True
             
         # 2. Check CSRF Header and Token
-        token = monitor_instance.config.get("api_token") if monitor_instance and monitor_instance.config else ""
-        client_token = self.headers.get("X-Sanguine-Auth")
-        
-        # If no token is set in config (e.g. disabled auth), allow it, otherwise require match
-        if not token:
-            return True
-            
-        return client_token == token
+        return secrets.compare_digest(self.headers.get("X-Sanguine-Auth", ""), API_TOKEN)
 
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -335,11 +331,6 @@ def main():
     if monitor_instance.config.get("enabled", False):
         monitor_instance.start_monitoring()
         
-    # Generate API token if not exists
-    if "api_token" not in monitor_instance.config or not monitor_instance.config["api_token"]:
-        monitor_instance.config["api_token"] = secrets.token_hex(16)
-        monitor_instance.save_config()
-
     # Create the web folder if it doesn't exist
     web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
     os.makedirs(web_dir, exist_ok=True)
@@ -355,9 +346,8 @@ def main():
             display_host = "localhost" if bind_ip == "127.0.0.1" else (bind_ip if bind_ip else "localhost")
             print("Sanguine Sentry Core Active.")
             print("---------------------------------------------")
-            token = monitor_instance.config.get("api_token", "")
             dashboard_url = f"http://{display_host}:{port}/"
-            auth_launch_url = f"{dashboard_url}?token={token}" if token else dashboard_url
+            auth_launch_url = f"{dashboard_url}?token={API_TOKEN}"
             print(f"Access the dashboard at: {dashboard_url}")
             print("---------------------------------------------")
             

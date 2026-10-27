@@ -22,6 +22,8 @@ class ConfigMixin:
                     else:
                         self.config[k] = env_val
 
+            # Configs from before the per-run token (api/server.py API_TOKEN) still hold the old one.
+            self.config.pop('api_token', None)
             self.validate_config()
             self.save_config()
         except Exception as e:

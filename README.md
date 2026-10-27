@@ -107,7 +107,7 @@ The web dashboard provides:
 ## Security & Sandbox
 
 To ensure local safe execution, Sanguine Sentry implements the following protections:
-1. **API Token Validation:** A cryptographically secure random API token is generated the first time the server starts without one, and saved in `config.json` (gitignored, `0600`) for later starts. Every front-end API request must authenticate with an `X-API-Token` header.
+1. **API Token Validation:** A cryptographically secure random API token is generated in memory on every server start and never written to disk. The server opens the dashboard with it in the URL, and every front-end API request must authenticate with an `X-Sanguine-Auth` header.
 2. **DNS Rebinding Shield:** Strict validation of the HTTP `Host` header to reject unauthorized external requests.
 3. **Execution Splitting:** Employs argument-list execution via `shlex` and drops shell invocations (`shell=False`) for command triggers.
 4. **Local Socket Hardening:** The Wayland capture socket belongs to portalgrab. It lives in `$XDG_RUNTIME_DIR` with `0600` permissions and accepts only clients running as the same user.
