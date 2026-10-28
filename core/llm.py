@@ -5,9 +5,9 @@ import base64
 import logging
 
 # Any OpenAI-compatible server; the default is the Unraid llama-swap, so the in-game calls stay off the workstation GPU.
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://192.168.50.71:9292/v1")
-TEXT_MODEL = os.getenv("LLM_MODEL", "deepseek-r1-8b")
-VISION_MODEL = os.getenv("LLM_VISION_MODEL", "qwen3-vl")
+LLM_BASE_URL = os.getenv("SENTRY_LLM_BASE_URL", "http://192.168.50.71:9292/v1")
+TEXT_MODEL = os.getenv("SENTRY_LLM_MODEL", "deepseek-r1-8b")
+VISION_MODEL = os.getenv("SENTRY_LLM_VISION_MODEL", "qwen3-vl")
 
 def _chat_json(model, content, schema, timeout):
     """One chat completion constrained to `schema`. Returns the answer text only (a reasoning model's
