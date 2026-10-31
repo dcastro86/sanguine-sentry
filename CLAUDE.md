@@ -22,6 +22,8 @@ originally named PoE as the primary target.
 with the API token check and `Host`-header verification still in force. There is no "done": new features
 are allowed without a scope change here. That is a deliberate choice (2026-09-15).
 
+**Done when:** healthy, never finished: `gates` from the repo root reports all MET (test suite passes, scanner uses `portalgrab.sock`, portalgrab stays disabled at login and `api/server.py` starts/stops only what it started, no Ollama API left, both LLM calls answer live from llama-swap); the repo has no systemd unit or timer of its own, so nothing must be active after a reboot (draft, owner to confirm)
+
 **Not doing:** targeting or advertising PoE, or any online game that forbids automation (above); binding
 beyond `127.0.0.1` by default; loosening the token or DNS-rebinding checks; a frontend build step.
 
