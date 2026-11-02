@@ -27,3 +27,6 @@ gate "no Ollama API left" \
 
 gate "threshold tuning and globe finding both answer live from llama-swap, with Ollama idle" \
   "for v in venv .venv ../sanguine-sentry/venv; do [ -x \$v/bin/python ] && break; done; \$v/bin/python tests/llm_live.py | grep -q '^LLM-LIVE-OK\$' && ! curl -s -m5 http://192.168.50.71:11434/api/ps | grep -q '\"name\"'"
+gate "CLAUDE.md paths and npm scripts exist"   'doc-claims'
+gate "ruff findings ≤ 17 (owner, 2026-11-01)"  'out=$(ruff check --exit-zero --quiet --output-format concise .) && [ $(echo "$out" | grep -c ":[0-9]*:[0-9]*: ") -le 17 ]'
+gate "pyright errors ≤ 159 (owner, 2026-11-01)"  'out=$(pyright 2>&1); n=$(echo "$out" | grep -oE "^[0-9]+ errors?" | grep -oE "^[0-9]+") && [ "$n" -le 159 ]'
